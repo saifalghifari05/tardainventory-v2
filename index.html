@@ -1,0 +1,1055 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0"/>
+<title>Tarda Tailor — Inventory</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#eef2f7}
+input,select,button,textarea{font-family:inherit}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:#ccc;border-radius:3px}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+@keyframes slideIn{from{transform:translateX(-100%)}to{transform:translateX(0)}}
+.kat-tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;flex-wrap:nowrap!important}
+.kat-tabs::-webkit-scrollbar{height:3px}
+.kat-tabs button{flex-shrink:0}
+</style>
+</head>
+<body><div id="root"></div>
+<script type="text/babel">
+const {useState,useMemo,useCallback,useEffect,useRef} = React;
+
+// ─── SUPABASE ─────────────────────────────────────────────
+const SUPABASE_URL  = 'https://dajkwvxouwhvenyzvqlm.supabase.co';
+const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRhamt3dnhvdXdodmVueXp2cWxtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2NDc2NjYsImV4cCI6MjA5NzIyMzY2Nn0.IdiPEKHJkmTCIcWP2lKWQvqlXP1KKYpmtEM9b1Pijyc';
+const { createClient } = window.supabase;
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ─── CONSTANTS ────────────────────────────────────────────
+const PWS = {owner:'052731', admin:'1234', finishing:'5678'};
+const ALL_KAT = ["Kain","Benang","Resletting","Interlining","Kancing","Pin","Kabak","Tarboosh","Plastik Zipper","Hardbox","Mika","Kardus"];
+const NON_KAIN_KAT = ALL_KAT.filter(k=>k!=="Kain");
+const FINISHING_CATS = ["Kancing","Hardbox","Pin","Tarboosh","Mika","Kardus","Kabak","Plastik Zipper"];
+const DEF_SATUAN = ["pcs","lembar","meter","cone","roll","yard"];
+const C = {pri:"#1a237e",sec:"#283593",acc:"#2196f3",ok:"#43a047",warn:"#fb8c00",err:"#e53935",dis:"#1565c0",bg:"#eef2f7"};
+const CAT_COLOR = {Kain:"#5c6bc0",Resletting:"#e53935",Benang:"#7b1fa2",Interlining:"#00897b",Kancing:"#f57f17",Pin:"#0277bd",Kabak:"#558b2f",Tarboosh:"#795548","Plastik Zipper":"#6d4c41",Hardbox:"#455a64",Mika:"#00838f",Kardus:"#8d6e63"};
+const CAT_ICON  = {Kain:"🧵",Resletting:"🔗",Benang:"🧶",Interlining:"🪡",Kancing:"⚪",Pin:"📌",Kabak:"🔘",Tarboosh:"🪢","Plastik Zipper":"🛍️",Hardbox:"📫",Mika:"🔲",Kardus:"📦"};
+
+// ─── UTILS ────────────────────────────────────────────────
+const fmt    = n => new Intl.NumberFormat("id-ID").format(n);
+const fmtRp  = n => "Rp " + fmt(n);
+const genId  = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+const today  = () => new Date().toISOString().split("T")[0];
+const toNum  = v => parseFloat(v)||0;
+const jakartaTime = () => {
+  const d=new Date(), j=new Date(d.toLocaleString("en-US",{timeZone:"Asia/Jakarta"}));
+  const p=n=>String(n).padStart(2,"0");
+  return `${p(j.getDate())}/${p(j.getMonth()+1)}/${j.getFullYear()} ${p(j.getHours())}:${p(j.getMinutes())}:${p(j.getSeconds())}`;
+};
+const getOpts=(key,def)=>{try{const v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch{return def;}};
+
+const useMobile=()=>{
+  const [m,setM]=useState(()=>window.innerWidth<700);
+  useEffect(()=>{const h=()=>setM(window.innerWidth<700);window.addEventListener('resize',h);return()=>window.removeEventListener('resize',h);},[]);
+  return m;
+};
+
+// ─── STATE MAPPING ────────────────────────────────────────
+const toState = d => {
+  const jenisKain = (d.jenis_kain||[]).map(j=>({...j,kodePrefix:j.kode_prefix||"",harga:toNum(j.harga),kategori:j.kategori||"Kain",satuan:j.satuan||"meter",_sheet:"jenis_kain"}));
+  const mats      = (d.materials||[]).map(m=>({...m,kodePrefix:m.kode||"",harga:toNum(m.harga),kategori:m.kategori||"Lainnya",_sheet:"materials"}));
+  const jenis     = [...jenisKain,...mats];
+  const allItems  = (d.paket_items||[]).map(i=>({...i,qty:toNum(i.qty),harga:toNum(i.harga)}));
+  const paketIds  = new Set((d.pakets||[]).map(p=>String(p.id)));
+  const filteredItems = allItems.filter(i=>paketIds.has(String(i.paket_id)));
+  return {
+    jenis,
+    stokVarian:(d.stok_varian||[]).map(k=>({...k,jenisId:k.jenis_id||"",jenisNama:k.jenis_nama||"",kodePrefix:k.kode_prefix||"",qty:toNum(k.qty)||toNum(k.sisa),sisa:toNum(k.sisa),kategori:k.kategori||"Kain"})),
+    pkgs:(d.pakets||[]).map(p=>({...p,hpp:toNum(p.hpp),items:filteredItems.filter(i=>String(i.paket_id)===String(p.id))})),
+    trxs:[...(d.transaksi||[])].reverse()
+  };
+};
+
+// ─── DB OPERATIONS (replaces GAS) ────────────────────────
+const dbLoad = async () => {
+  const [r1,r2,r3,r4,r5,r6] = await Promise.all([
+    sb.from('jenis_kain').select('*'),
+    sb.from('materials').select('*'),
+    sb.from('stok_varian').select('*').neq('status','arsip'),
+    sb.from('pakets').select('*').order('tanggal',{ascending:false}).limit(200),
+    sb.from('paket_items').select('*'),
+    sb.from('transaksi').select('*').order('tanggal',{ascending:false}).limit(200),
+  ]);
+  return {jenis_kain:r1.data||[],materials:r2.data||[],stok_varian:r3.data||[],pakets:r4.data||[],paket_items:r5.data||[],transaksi:r6.data||[]};
+};
+
+const dbUpsert = async (table,row) => {const {error}=await sb.from(table).upsert(row);if(error)throw new Error(error.message);};
+const dbDelete = async (table,id)  => {const {error}=await sb.from(table).delete().eq('id',id);if(error)throw new Error(error.message);};
+const dbUpdate = async (table,id,fields) => {const {error}=await sb.from(table).update(fields).eq('id',id);if(error)throw new Error(error.message);};
+
+const dbPatchStok = async (id,fields) => {
+  await dbUpdate('stok_varian',id,fields);
+  if(fields.status==='arsip'){
+    const {data}=await sb.from('stok_varian').select('*').eq('id',id).single();
+    if(data&&data.kategori==='Kain') await dbUpsert('arsip_kain',{...data,arsip_tanggal:jakartaTime()});
+  }
+};
+
+const dbSavePaket = async (paket,items) => {
+  await dbUpsert('pakets',paket);
+  await sb.from('paket_items').delete().eq('paket_id',paket.id);
+  if(items.length>0){const {error}=await sb.from('paket_items').insert(items);if(error)throw new Error(error.message);}
+};
+
+const dbAppendPaketItems = async (paketId,newItems) => {
+  const {error}=await sb.from('paket_items').insert(newItems);
+  if(error)throw new Error(error.message);
+  const {data:allItems}=await sb.from('paket_items').select('*').eq('paket_id',paketId);
+  const newHpp=(allItems||[]).reduce((s,i)=>s+(toNum(i.qty))*(toNum(i.harga)),0);
+  await dbUpdate('pakets',paketId,{hpp:newHpp,status:'disiapkan'});
+  return newHpp;
+};
+
+const dbGetNextKode = async () => {
+  const d=new Date(),dd=String(d.getDate()).padStart(2,"0"),mm=String(d.getMonth()+1).padStart(2,"0");
+  const prefix=`PKT-${dd}${mm}${d.getFullYear()}-`;
+  const {data}=await sb.from('pakets').select('kode').like('kode',`${prefix}%`);
+  return `${prefix}${String((data?.length||0)+1).padStart(3,"0")}`;
+};
+
+const dbProcessOrder = async (paketId,{forceItems=[],skipFinishing=false}={}) => {
+  const {data:paket}=await sb.from('pakets').select('*').eq('id',paketId).single();
+  if(!paket) return {success:false,error:'Paket tidak ditemukan'};
+  if(!skipFinishing&&paket.status==='pending') return {success:false,error:'PENDING: Tunggu input material finishing terlebih dahulu'};
+  const items = forceItems.length>0 ? forceItems : (await sb.from('paket_items').select('*').eq('paket_id',paketId)).data||[];
+  const {data:allStok}=await sb.from('stok_varian').select('*');
+  const log=[`Paket: ${paket.nama} | ${paket.status} | Items: ${items.length}`];
+  let notFoundCount=0; const processedItems=[];
+  for(const item of items){
+    const refId=item.ref_id||item.refId||'';
+    if(!refId){log.push(`SKIP: ${item.nama}`);continue;}
+    let found=(allStok||[]).find(r=>r.id===refId);
+    if(!found&&item.nama){const kode=item.nama.split(' ').pop();const byKode=(allStok||[]).filter(r=>r.kode===kode);if(byKode.length===1){found=byKode[0];log.push(`FALLBACK: ${kode}`);}}
+    if(found){
+      const newSisa=parseFloat(Math.max(0,found.sisa-item.qty).toFixed(3));
+      const autoArsip=newSisa<=0&&found.kategori==='Kain';
+      const newStatus=autoArsip?'arsip':'aktif';
+      await dbUpdate('stok_varian',found.id,{sisa:newSisa,status:newStatus});
+      if(autoArsip) await dbUpsert('arsip_kain',{...found,sisa:newSisa,status:'arsip',arsip_tanggal:jakartaTime()});
+      log.push(`OK: ${found.kode} ${found.sisa}→${newSisa}`);
+      processedItems.push({ref_id:found.id,newSisa,status:newStatus});
+    }else{notFoundCount++;log.push(`NOT FOUND: ${refId} (${item.nama})`);}
+  }
+  if(notFoundCount===0){
+    await dbUpdate('pakets',paketId,{status:'selesai'});
+    const summary=items.map(i=>`${i.nama.split(' ').pop()} ${i.qty}${(i.satuan||'').charAt(0)}`).join(' | ');
+    const detail=`${paket.nama} · ${paket.kode}\n${summary}`;
+    await dbUpsert('transaksi',{id:genId(),type:'outbound',detail,qty:items.length,satuan:'item',tanggal:jakartaTime()});
+  }
+  return {success:true,log,allProcessed:notFoundCount===0,processedItems};
+};
+
+const dbGenerateRecap = async (bulan,tahun) => {
+  const b=parseInt(bulan),y=parseInt(tahun);
+  const {data:allPakets}=await sb.from('pakets').select('*').eq('status','selesai');
+  const monthPakets=(allPakets||[]).filter(p=>{const d=new Date(p.tanggal);return!isNaN(d)&&d.getMonth()===b&&d.getFullYear()===y;});
+  const totalHpp=monthPakets.reduce((s,p)=>s+toNum(p.hpp),0);
+  const ids=monthPakets.map(p=>p.id);
+  const {data:allItems}=ids.length>0?await sb.from('paket_items').select('*').in('paket_id',ids):{data:[]};
+  const bd={Kain:0,Benang:0,Resletting:0,Interlining:0,Kancing:0,Pin:0,Kabak:0,Tarboosh:0,"Plastik Zipper":0,Hardbox:0,Mika:0,Kardus:0};
+  (allItems||[]).forEach(i=>{if(bd.hasOwnProperty(i.kategori))bd[i.kategori]+=toNum(i.qty);});
+  const {data:allTrx}=await sb.from('transaksi').select('*');
+  const mTrx=(allTrx||[]).filter(t=>{const d=new Date(t.tanggal.includes('/')?t.tanggal.split('/').reverse().join('-'):t.tanggal);return!isNaN(d)&&d.getMonth()===b&&d.getFullYear()===y;});
+  const recap={id:`RKP-${bulan}-${tahun}`,bulan,tahun,total_inbound:mTrx.filter(t=>t.type==='inbound').length,total_outbound:mTrx.filter(t=>t.type==='outbound').length,total_transaksi:mTrx.length,total_paket:monthPakets.length,total_hpp:totalHpp,kain_meter:bd.Kain,benang_cone:bd.Benang,resletting_pcs:bd.Resletting,interlining_lembar:bd.Interlining,kancing_pcs:bd.Kancing,pin_pcs:bd.Pin,kabak_pcs:bd.Kabak,tarboosh_pcs:bd.Tarboosh,plastikzipper_pcs:bd["Plastik Zipper"],hardbox_pcs:bd.Hardbox,mika_pcs:bd.Mika,kardus_pcs:bd.Kardus,generated_at:jakartaTime()};
+  await dbUpsert('monthly_recap',recap);
+  return recap;
+};
+
+// ─── ATOMS ────────────────────────────────────────────────
+const Notif=({n})=>!n?null:<div style={{position:"fixed",bottom:24,right:24,padding:"12px 20px",background:n.t==="err"?C.err:C.ok,color:"#fff",borderRadius:10,boxShadow:"0 4px 16px rgba(0,0,0,.2)",fontSize:14,zIndex:9999,maxWidth:360}}>{n.m}</div>;
+const Card=({children,style})=><div style={{background:"#fff",borderRadius:12,padding:"clamp(12px,3vw,20px)",boxShadow:"0 2px 8px rgba(0,0,0,.07)",...style}}>{children}</div>;
+const Btn=({children,onClick,bg=C.pri,style,disabled,loading})=><button onClick={onClick} disabled={disabled||loading} style={{background:(disabled||loading)?"#aaa":bg,color:"#fff",border:"none",borderRadius:8,padding:"9px 18px",cursor:(disabled||loading)?"not-allowed":"pointer",fontSize:13,fontWeight:600,...style}}>{loading?"⏳...":children}</button>;
+const Ghost=({children,onClick,style})=><button onClick={onClick} style={{background:"none",border:"1px solid #ddd",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontSize:13,...style}}>{children}</button>;
+const Inp=({label,value,onChange,type="text",placeholder,min,step,note})=>(
+  <div style={{marginBottom:12}}>
+    {label&&<label style={{fontSize:12,color:"#555",marginBottom:4,display:"block",fontWeight:600}}>{label}</label>}
+    <input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} min={min} step={step} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:"100%",boxSizing:"border-box"}}/>
+    {note&&<div style={{fontSize:11,color:"#aaa",marginTop:4}}>{note}</div>}
+  </div>
+);
+const Badge=({label,color="#999"})=><span style={{background:color+"22",color,padding:"3px 10px",borderRadius:20,fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>{label}</span>;
+const TH=({cols})=><thead><tr>{cols.map(c=><th key={c} style={{background:"#f5f7fa",padding:"10px 12px",textAlign:"left",fontSize:12,fontWeight:700,color:"#555",borderBottom:"2px solid #e8eaf0",whiteSpace:"nowrap"}}>{c}</th>)}</tr></thead>;
+const TD=({children,style})=><td style={{padding:"10px 12px",borderBottom:"1px solid #f0f2f5",fontSize:13,...style}}>{children}</td>;
+const Tbl=({children})=><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse"}}>{children}</table></div>;
+const SC=({icon,label,value,color,sub})=><Card style={{display:"flex",alignItems:"center",gap:14}}><div style={{width:48,height:48,borderRadius:12,background:color+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{icon}</div><div><div style={{fontSize:12,color:"#888",marginBottom:2}}>{label}</div><div style={{fontSize:18,fontWeight:700,color}}>{value}</div>{sub&&<div style={{fontSize:11,color:"#aaa"}}>{sub}</div>}</div></Card>;
+
+// Smart pagination — prev/next + ellipsis
+function Pg({page,total,onChange}){
+  if(total<=1)return null;
+  const getPages=()=>{
+    if(total<=7)return Array.from({length:total},(_,i)=>i+1);
+    const pages=[1];
+    if(page>3)pages.push('...');
+    for(let i=Math.max(2,page-1);i<=Math.min(total-1,page+1);i++)pages.push(i);
+    if(page<total-2)pages.push('...');
+    pages.push(total);
+    return pages;
+  };
+  const btn=(label,action,disabled)=><button onClick={action} disabled={disabled} style={{padding:"6px 10px",borderRadius:6,border:"1px solid #ddd",background:"#fff",cursor:disabled?"not-allowed":"pointer",color:disabled?"#ccc":"#333",minWidth:32}}>{label}</button>;
+  return(
+    <div style={{display:"flex",gap:4,justifyContent:"center",alignItems:"center",marginTop:16,flexWrap:"wrap"}}>
+      {btn("←",()=>onChange(page-1),page===1)}
+      {getPages().map((p,i)=>p==='...'
+        ?<span key={`e${i}`} style={{padding:"0 4px",color:"#aaa",lineHeight:"32px"}}>⋯</span>
+        :<button key={p} onClick={()=>onChange(p)} style={{padding:"6px 12px",borderRadius:6,border:"none",background:p===page?C.pri:"#f0f0f0",color:p===page?"#fff":"#333",cursor:"pointer",fontWeight:p===page?700:400,minWidth:32}}>{p}</button>
+      )}
+      {btn("→",()=>onChange(page+1),page===total)}
+    </div>
+  );
+}
+
+function Modal({title,onClose,children,w=520}){return(
+  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.45)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16}}>
+    <div style={{background:"#fff",borderRadius:16,width:w,maxWidth:"100%",maxHeight:"90vh",overflowY:"auto"}}>
+      <div style={{padding:"16px 20px",borderBottom:"1px solid #eee",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{fontWeight:700,fontSize:16,color:C.pri}}>{title}</span>
+        <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,color:"#aaa"}}>×</button>
+      </div>
+      <div style={{padding:20}}>{children}</div>
+    </div>
+  </div>
+);}
+
+function CustomSel({label,value,onChange,storageKey,defaultOpts,canEdit,placeholder}){
+  const [opts,setOpts]=useState(()=>getOpts(storageKey,defaultOpts));
+  const [adding,setAdding]=useState(false);const [nv,setNv]=useState("");
+  const allOpts=useMemo(()=>[...new Set([...defaultOpts,...opts])],[defaultOpts,opts]);
+  const add=()=>{const v=nv.trim();if(!v)return;const u=[...new Set([...opts,v])];setOpts(u);try{localStorage.setItem(storageKey,JSON.stringify(u));}catch{}onChange(v);setNv("");setAdding(false);};
+  return(
+    <div style={{marginBottom:12}}>
+      {label&&<label style={{fontSize:12,color:"#555",marginBottom:4,display:"block",fontWeight:600}}>{label}</label>}
+      <div style={{display:"flex",gap:6}}>
+        <select value={value} onChange={e=>onChange(e.target.value)} style={{flex:1,border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13}}>
+          {placeholder&&<option value="">— {placeholder} —</option>}
+          {allOpts.map(o=><option key={o} value={o}>{o}</option>)}
+        </select>
+        {canEdit&&<button onClick={()=>setAdding(!adding)} style={{background:adding?C.pri:"#f0f0f0",color:adding?"#fff":"#555",border:"none",borderRadius:8,padding:"0 12px",cursor:"pointer",fontSize:16,fontWeight:700}}>{adding?"×":"+"}</button>}
+      </div>
+      {adding&&canEdit&&<div style={{display:"flex",gap:6,marginTop:6}}><input value={nv} onChange={e=>setNv(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Ketik pilihan baru..." autoFocus style={{flex:1,border:"1px solid "+C.acc,borderRadius:8,padding:"8px 12px",fontSize:13}}/><Btn onClick={add} bg={C.ok} style={{padding:"8px 14px",fontSize:12}}>✓</Btn></div>}
+    </div>
+  );
+}
+
+function Barcode({kode}){const bars=[];let x=6;for(let ci=0;ci<kode.length;ci++){const c=kode.charCodeAt(ci);for(let b=0;b<7;b++){const bit=(c>>b)&1,w=bit?2.5:1.2;bars.push(<rect key={`${ci}-${b}`} x={x} y={4} width={w} height={44} fill="#111"/>);x+=w+1.2;}x+=3;}const W=Math.min(x+12,340);return(<div style={{textAlign:"center"}}><svg width={W} height={68} viewBox={`0 0 ${x+12} 68`} style={{maxWidth:"100%",border:"1px solid #eee",borderRadius:6,padding:4,background:"#fff"}}>{bars}<text x={(x+12)/2} y={62} textAnchor="middle" fontSize={9} fontFamily="monospace" fill="#333">{kode}</text></svg><div style={{marginTop:8,fontFamily:"monospace",fontSize:14,fontWeight:700,letterSpacing:2,color:"#333"}}>{kode}</div></div>);}
+
+// ─── STATUS HELPERS ───────────────────────────────────────
+const statusLabel=(s)=>s==='selesai'?"✅ Selesai":s==='disiapkan'?"🔵 Disiapkan":"⏳ Pending";
+const statusColor=(s)=>s==='selesai'?C.ok:s==='disiapkan'?C.dis:C.warn;
+
+// ─── LOADING & LOGIN ──────────────────────────────────────
+function LoadingScreen({error,onRetry}){return(
+  <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",background:`linear-gradient(135deg,${C.pri},${C.sec})`,gap:20}}>
+    <div style={{fontSize:64}}>👔</div><div style={{fontWeight:800,fontSize:22,color:"#fff"}}>Tarda Tailor</div>
+    {!error?<><div style={{display:"flex",gap:6}}>{[0,1,2].map(i=><div key={i} style={{width:10,height:10,borderRadius:"50%",background:"rgba(255,255,255,.7)",animation:`bounce 1.2s ${i*0.2}s infinite`}}/>)}</div><div style={{color:"rgba(255,255,255,.7)",fontSize:13}}>Memuat data...</div></>
+    :<><div style={{background:"rgba(255,255,255,.15)",borderRadius:12,padding:"16px 24px",color:"#fff",fontSize:13,textAlign:"center",maxWidth:340}}><div style={{fontSize:20,marginBottom:8}}>❌</div><b>Gagal terhubung ke database</b><div style={{opacity:.8,fontSize:12,marginTop:4}}>{error}</div></div><button onClick={onRetry} style={{background:"#fff",color:C.pri,border:"none",borderRadius:8,padding:"10px 24px",fontWeight:700,cursor:"pointer",fontSize:14}}>🔄 Coba Lagi</button></>}
+  </div>
+);}
+
+function LoginPage({onLogin}){
+  const [sel,setSel]=useState(null);const [pw,setPw]=useState("");const [errMsg,setErrMsg]=useState("");
+  const login=()=>{
+    if(!sel)return setErrMsg("Pilih role dulu!");
+    if(pw!==PWS[sel])return setErrMsg("Password salah!");
+    sessionStorage.setItem('tarda_role',sel);
+    onLogin(sel);
+  };
+  return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:`linear-gradient(135deg,${C.pri},${C.sec})`}}>
+    <div style={{background:"#fff",borderRadius:20,padding:40,width:400,maxWidth:"calc(100vw - 32px)",boxShadow:"0 20px 60px rgba(0,0,0,.3)"}}>
+      <div style={{textAlign:"center",marginBottom:28}}><div style={{fontSize:52}}>👔</div><div style={{fontWeight:800,fontSize:22,color:C.pri,marginTop:8}}>Tarda Tailor</div><div style={{fontSize:13,color:"#888",marginTop:4}}>Inventory System</div></div>
+      <div style={{fontSize:12,color:"#555",fontWeight:600,marginBottom:8}}>Login sebagai:</div>
+      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap"}}>
+        {[{id:"owner",l:"👑 Owner"},{id:"admin",l:"🏪 Admin Gudang"},{id:"finishing",l:"✂️ Finishing"}].map(r=>(
+          <button key={r.id} onClick={()=>{setSel(r.id);setErrMsg("");}} style={{flex:1,minWidth:80,padding:"12px 8px",borderRadius:10,border:`2px solid ${sel===r.id?C.pri:"#ddd"}`,background:sel===r.id?C.pri+"15":"#fff",color:sel===r.id?C.pri:"#555",fontWeight:700,cursor:"pointer",fontSize:13}}>{r.l}</button>
+        ))}
+      </div>
+      <Inp label="Password" value={pw} onChange={v=>{setPw(v);setErrMsg("");}} type="password" placeholder="Password"/>
+      {errMsg&&<div style={{color:C.err,fontSize:12,marginBottom:8}}>❌ {errMsg}</div>}
+      <button onKeyDown={e=>e.key==='Enter'&&login()} onClick={login} style={{width:"100%",padding:13,background:C.pri,color:"#fff",border:"none",borderRadius:10,fontSize:15,fontWeight:700,cursor:"pointer",marginTop:4}}>Masuk →</button>
+    </div>
+  </div>);
+}
+
+// ─── PAKET DETAIL ─────────────────────────────────────────
+function PaketDetail({pkg,onClose}){if(!pkg)return null;return(
+  <Modal title="📋 Detail Paket" onClose={onClose} w={580}>
+    <Barcode kode={pkg.kode}/>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,margin:"16px 0",fontSize:13}}>
+      {[["NAMA",pkg.nama],["CUSTOMER",pkg.customer||"–"],["TANGGAL",String(pkg.tanggal).split("T")[0]]].map(([l,v])=><div key={l} style={{background:"#f9f9f9",borderRadius:8,padding:"10px 12px"}}><div style={{color:"#888",fontSize:11}}>{l}</div><b>{v}</b></div>)}
+      <div style={{background:"#f9f9f9",borderRadius:8,padding:"10px 12px"}}><div style={{color:"#888",fontSize:11}}>STATUS</div><Badge label={statusLabel(pkg.status)} color={statusColor(pkg.status)}/></div>
+    </div>
+    {pkg.deskripsi&&<div style={{background:"#e8eaf6",borderRadius:8,padding:"10px 12px",marginBottom:12,fontSize:13,color:C.sec}}>{pkg.deskripsi}</div>}
+    <div style={{fontWeight:700,fontSize:13,marginBottom:8,color:C.pri}}>Detail Material:</div>
+    <Tbl><TH cols={["Material","Qty","Satuan","Harga/Sat","Subtotal"]}/><tbody>{pkg.items.map((it,i)=>(<tr key={i}><TD><b>{it.nama}</b></TD><TD>{it.qty}</TD><TD>{it.satuan}</TD><TD>{fmtRp(it.harga)}</TD><TD><b style={{color:C.ok}}>{fmtRp(it.qty*it.harga)}</b></TD></tr>))}</tbody></Tbl>
+    <div style={{marginTop:12,padding:"14px 0",borderTop:"2px solid #eee",display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontWeight:700,fontSize:15}}>Total HPP</span><span style={{fontWeight:700,fontSize:22,color:C.ok}}>{fmtRp(pkg.hpp)}</span></div>
+  </Modal>
+);}
+
+// ─── DASHBOARD ────────────────────────────────────────────
+function Dashboard({jenis,stokVarian,pkgs,onView}){
+  const aktif=stokVarian.filter(k=>k.status==="aktif");
+  const totalNilai=useMemo(()=>aktif.reduce((s,k)=>{const j=jenis.find(j=>j.id===k.jenisId);return s+(k.sisa||0)*(j?.harga||0);},0),[aktif,jenis]);
+  const low=aktif.filter(k=>k.sisa<5);
+  return(<div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:14}}>
+      <SC icon="🧵" label="Varian Aktif" value={aktif.length} color={C.ok}/>
+      <SC icon="⚠️" label="Stok Menipis" value={low.length} color={C.warn} sub="< 5 unit"/>
+      <SC icon="📋" label="Order Pending" value={pkgs.filter(p=>p.status==="pending").length} color={C.pri}/>
+      <SC icon="💰" label="Estimasi Nilai Stok" value={fmtRp(totalNilai)} color={C.ok}/>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:12}}>
+      <Card>
+        <div style={{fontWeight:600,marginBottom:10,fontSize:13}}>⚠️ Stok Menipis (&lt;5)</div>
+        {/* Scrollable internally */}
+        <div style={{maxHeight:320,overflowY:"auto"}}>
+          {low.length===0?<div style={{color:C.ok,fontSize:13}}>✅ Semua aman</div>
+          :low.map(k=><div key={k.id} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{k.jenisNama} {k.kode}</span><Badge label={`${k.sisa}`} color={C.err}/></div>)}
+        </div>
+      </Card>
+      <Card>
+        <div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:12}}>📋 Paket Terbaru</div>
+        <div style={{maxHeight:320,overflowY:"auto"}}>
+          {pkgs.length===0?<div style={{color:"#aaa",fontSize:13}}>Belum ada</div>
+          :pkgs.slice(0,10).map(p=>(<div key={p.id} onClick={()=>onView(p)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f5f5f5",cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background="#f0f4ff"} onMouseLeave={e=>e.currentTarget.style.background=""}>
+            <div><div style={{fontFamily:"monospace",fontSize:11,color:C.pri,fontWeight:700}}>{p.kode}</div><div style={{fontWeight:600,fontSize:13}}>{p.nama} — {p.customer||"–"}</div></div>
+            <div style={{textAlign:"right"}}><div style={{fontWeight:700,color:C.ok,fontSize:12}}>{fmtRp(p.hpp)}</div><Badge label={statusLabel(p.status)} color={statusColor(p.status)}/></div>
+          </div>))}
+        </div>
+      </Card>
+    </div>
+  </div>);
+}
+
+// ─── NILAI STOK ───────────────────────────────────────────
+function NilaiStok({jenis,stokVarian}){
+  const [katFilter,setKatFilter]=useState("Semua");const [pg,setPg]=useState(1);const PS=15;
+  const aktif=stokVarian.filter(k=>k.status==="aktif");
+  const allItems=useMemo(()=>aktif.map(k=>{const j=jenis.find(j=>j.id===k.jenisId);return{id:k.id,nama:`${k.jenisNama} ${k.kode}`,kategori:k.kategori||"Kain",qty:k.sisa,satuan:j?.satuan||"pcs",harga:j?.harga||0,nilai:k.sisa*(j?.harga||0)};}), [aktif,jenis]);
+  const kats=useMemo(()=>["Semua",...new Set(allItems.map(i=>i.kategori))],[allItems]);
+  const filtered=katFilter==="Semua"?allItems:allItems.filter(i=>i.kategori===katFilter);
+  const paged=filtered.slice((pg-1)*PS,pg*PS);
+  const total=filtered.reduce((s,i)=>s+i.nilai,0);
+  const catTotals=useMemo(()=>{const c={};allItems.forEach(i=>{c[i.kategori]=(c[i.kategori]||0)+i.nilai;});return c;},[allItems]);
+  return(<div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:14}}>
+      <SC icon="💰" label="Total Nilai Stok" value={fmtRp(allItems.reduce((s,i)=>s+i.nilai,0))} color={C.ok}/>
+      {Object.entries(catTotals).map(([k,v])=><SC key={k} icon={CAT_ICON[k]||"📦"} label={k} value={fmtRp(v)} color={CAT_COLOR[k]||C.acc}/>)}
+    </div>
+    <Card>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>{kats.map(k=><button key={k} onClick={()=>{setKatFilter(k);setPg(1);}} style={{padding:"5px 14px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:katFilter===k?C.pri:"#f0f0f0",color:katFilter===k?"#fff":"#555"}}>{k}</button>)}</div>
+      <Tbl><TH cols={["Nama Item","Kategori","Qty","Harga/Sat","Nilai"]}/><tbody>
+        {paged.map(i=><tr key={i.id}><TD><b>{i.nama}</b></TD><TD><Badge label={i.kategori} color={CAT_COLOR[i.kategori]||C.acc}/></TD><TD>{i.qty} {i.satuan}</TD><TD>{fmtRp(i.harga)}/{i.satuan}</TD><TD><b style={{color:C.ok}}>{fmtRp(i.nilai)}</b></TD></tr>)}
+        <tr><td colSpan={4} style={{padding:"12px",fontWeight:700,fontSize:14,borderTop:"2px solid #eee",color:C.pri}}>Total{katFilter!=="Semua"?` — ${katFilter}`:""}</td><td style={{padding:"12px",fontWeight:800,fontSize:16,color:C.ok,borderTop:"2px solid #eee"}}>{fmtRp(total)}</td></tr>
+      </tbody></Tbl>
+      <Pg page={pg} total={Math.ceil(filtered.length/PS)} onChange={setPg}/>
+    </Card>
+  </div>);
+}
+
+// ─── MASTER HARGA ─────────────────────────────────────────
+function MasterHarga({jenis,setJenis,showNotif,role}){
+  const canEdit=role==="owner";
+  const [search,setSearch]=useState("");const [katFilter,setKatFilter]=useState("Semua");const [pg,setPg]=useState(1);const PS=15;const [saving,setSaving]=useState(false);
+  const [kModal,setKModal]=useState(false);const [kEdit,setKEdit]=useState(null);const [kF,setKF]=useState({nama:"",kodePrefix:"",harga:"",satuan:"meter"});
+  const [mModal,setMModal]=useState(false);const [mEdit,setMEdit]=useState(null);const [mF,setMF]=useState({kode:"",nama:"",kategori:"Kancing",satuan:"pcs",harga:""});
+  const allKats=useMemo(()=>["Semua",...new Set(jenis.map(j=>j.kategori))],[jenis]);
+  const filtered=useMemo(()=>{let l=jenis;if(katFilter!=="Semua")l=l.filter(j=>j.kategori===katFilter);if(search)l=l.filter(j=>j.nama.toLowerCase().includes(search.toLowerCase())||j.kodePrefix.toLowerCase().includes(search.toLowerCase()));return l;},[jenis,katFilter,search]);
+  const paged=filtered.slice((pg-1)*PS,pg*PS);
+
+  const openKain=(j=null)=>{setKEdit(j);setKF(j?{nama:j.nama,kodePrefix:j.kodePrefix||"",harga:j.harga,satuan:j.satuan||"meter"}:{nama:"",kodePrefix:"",harga:"",satuan:"meter"});setKModal(true);};
+  const saveKain=async()=>{
+    if(!kF.nama||!kF.harga)return showNotif("Lengkapi semua field!","err");
+    const id=kEdit?kEdit.id:genId();const np=kF.kodePrefix.trim().toUpperCase();
+    const api={id,nama:kF.nama,kode_prefix:np,harga:parseInt(kF.harga),kategori:"Kain",satuan:kF.satuan};
+    const st={id,nama:kF.nama,kodePrefix:np,harga:parseInt(kF.harga),kategori:"Kain",satuan:kF.satuan,_sheet:"jenis_kain"};
+    setSaving(true);try{await dbUpsert('jenis_kain',api);kEdit?setJenis(p=>p.map(j=>j.id===id?st:j)):setJenis(p=>[...p,st]);showNotif("Kain disimpan!");setKModal(false);}catch(e){showNotif("Gagal: "+e.message,"err");}setSaving(false);
+  };
+  const delKain=async j=>{if(!confirm(`Hapus ${j.nama}?`))return;try{await dbDelete('jenis_kain',j.id);setJenis(p=>p.filter(x=>x.id!==j.id));showNotif("Dihapus!");}catch(e){showNotif("Gagal: "+e.message,"err");}};
+  const openMat=(item=null)=>{setMEdit(item);setMF(item?{kode:item.kodePrefix||"",nama:item.nama,kategori:item.kategori,satuan:item.satuan,harga:item.harga}:{kode:"",nama:"",kategori:"Kancing",satuan:"pcs",harga:""});setMModal(true);};
+  const saveMat=async()=>{
+    if(!mF.nama||!mF.kategori||!mF.satuan||!mF.harga)return showNotif("Lengkapi semua field!","err");
+    const kode=(mF.kode.trim()||mF.nama.replace(/\s+/g,"-").slice(0,12)).toUpperCase();
+    const id=mEdit?mEdit.id:genId();const h=parseInt(mF.harga)||0;
+    const api={id,kode,nama:mF.nama,satuan:mF.satuan,kategori:mF.kategori,harga:h};
+    const st={id,nama:mF.nama,kodePrefix:kode,harga:h,kategori:mF.kategori,satuan:mF.satuan,_sheet:"materials"};
+    setSaving(true);try{await dbUpsert('materials',api);mEdit?setJenis(p=>p.map(j=>j.id===id?st:j)):setJenis(p=>[...p,st]);showNotif("Disimpan!");setMModal(false);}catch(e){showNotif("Gagal: "+e.message,"err");}setSaving(false);
+  };
+  const delMat=async item=>{if(!confirm(`Hapus ${item.nama}?`))return;try{await dbDelete('materials',item.id);setJenis(p=>p.filter(x=>x.id!==item.id));showNotif("Dihapus!");}catch(e){showNotif("Gagal: "+e.message,"err");}};
+  const handleEdit=item=>item.kategori==="Kain"?openKain(item):openMat(item);
+  const handleDel=item=>item.kategori==="Kain"?delKain(item):delMat(item);
+
+  return(<div>
+    {!canEdit&&<div style={{background:"#fff8e1",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:13,color:"#e65100"}}>⚠️ Mode baca saja</div>}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,flexWrap:"wrap",gap:10}}>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+        <input placeholder="🔍 Cari..." value={search} onChange={e=>{setSearch(e.target.value);setPg(1);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:200}}/>
+        <select value={katFilter} onChange={e=>{setKatFilter(e.target.value);setPg(1);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13}}>
+          {allKats.map(k=><option key={k} value={k}>{k}</option>)}
+        </select>
+      </div>
+      {canEdit&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}><Btn onClick={()=>openKain()} bg="#5c6bc0">🧵 + Tambah Kain</Btn><Btn onClick={()=>openMat()} bg={C.warn}>📦 + Tambah Material</Btn></div>}
+    </div>
+    <Card>
+      <Tbl><TH cols={["Nama","Kategori","Prefix/Kode","Satuan","Harga",canEdit?"Aksi":""]}/><tbody>
+        {paged.map(item=>(<tr key={item.id}>
+          <TD><b>{item.nama}</b></TD>
+          <TD><Badge label={item.kategori} color={CAT_COLOR[item.kategori]||C.acc}/></TD>
+          <TD>{item.kodePrefix?<span style={{fontFamily:"monospace",background:"#f5f5f5",padding:"3px 8px",borderRadius:6,fontSize:12,fontWeight:700}}>{item.kodePrefix}</span>:<span style={{color:"#ccc"}}>–</span>}</TD>
+          <TD>{item.satuan}</TD>
+          <TD><span style={{fontWeight:700,color:C.ok}}>{fmtRp(item.harga)}/{item.satuan}</span></TD>
+          {canEdit&&<TD><div style={{display:"flex",gap:6}}><Ghost onClick={()=>handleEdit(item)} style={{padding:"5px 10px",fontSize:12}}>✏️</Ghost><Ghost onClick={()=>handleDel(item)} style={{padding:"5px 10px",fontSize:12,color:C.err}}>🗑️</Ghost></div></TD>}
+        </tr>))}
+        {paged.length===0&&<tr><td colSpan={6} style={{textAlign:"center",padding:40,color:"#ccc"}}>Tidak ada item</td></tr>}
+      </tbody></Tbl>
+      <Pg page={pg} total={Math.ceil(filtered.length/PS)} onChange={p=>{setPg(p);}}/>
+    </Card>
+
+    {kModal&&canEdit&&<Modal title={kEdit?"Edit Jenis Kain":"Tambah Jenis Kain"} onClose={()=>setKModal(false)} w={440}>
+      <div style={{background:"#f0f4ff",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:C.pri}}>Disimpan ke tabel <b>jenis_kain</b></div>
+      <Inp label="Nama Kain *" value={kF.nama} onChange={v=>setKF(x=>({...x,nama:v}))} placeholder="Suprima / Vitale Barberis"/>
+      <Inp label="Kode Prefix (opsional)" value={kF.kodePrefix} onChange={v=>setKF(x=>({...x,kodePrefix:v.toUpperCase()}))} placeholder="HB017"/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <Inp label="Harga per meter *" type="number" value={kF.harga} onChange={v=>setKF(x=>({...x,harga:v}))} placeholder="100000"/>
+        <Inp label="Satuan *" value={kF.satuan} onChange={v=>setKF(x=>({...x,satuan:v}))} placeholder="meter"/>
+      </div>
+      {kF.harga&&<div style={{background:"#e8f5e9",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,color:C.ok}}>💰 {fmtRp(parseInt(kF.harga)||0)} / {kF.satuan||"meter"}</div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Ghost onClick={()=>setKModal(false)}>Batal</Ghost><Btn onClick={saveKain} loading={saving}>Simpan</Btn></div>
+    </Modal>}
+
+    {mModal&&canEdit&&<Modal title={mEdit?"Edit Material":"Tambah Material"} onClose={()=>setMModal(false)} w={440}>
+      <div style={{background:"#f0f4ff",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:12,color:C.pri}}>Disimpan ke tabel <b>materials</b></div>
+      <Inp label="Nama *" value={mF.nama} onChange={v=>setMF(x=>({...x,nama:v}))} placeholder="Resletting YKK 25cm / Kancing Cina Bulat Gold"/>
+      <CustomSel label="Kategori *" value={mF.kategori} onChange={v=>setMF(x=>({...x,kategori:v}))} storageKey="tarda_kat_opts" defaultOpts={NON_KAIN_KAT} canEdit={canEdit}/>
+      <CustomSel label="Satuan *" value={mF.satuan} onChange={v=>setMF(x=>({...x,satuan:v}))} storageKey="tarda_sat_opts" defaultOpts={DEF_SATUAN} canEdit={canEdit}/>
+      <Inp label="Kode (opsional)" value={mF.kode} onChange={v=>setMF(x=>({...x,kode:v.toUpperCase()}))} placeholder="YKK25 / CBG" note="Kosongkan untuk auto-generate. Otomatis kapital."/>
+      <Inp label={`Harga per ${mF.satuan||"pcs"} *`} type="number" value={mF.harga} onChange={v=>setMF(x=>({...x,harga:v}))} placeholder="5000"/>
+      {mF.harga&&<div style={{background:"#e8f5e9",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,color:C.ok}}>💰 {fmtRp(parseInt(mF.harga)||0)} / {mF.satuan||"pcs"}</div>}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Ghost onClick={()=>setMModal(false)}>Batal</Ghost><Btn onClick={saveMat} loading={saving}>Simpan</Btn></div>
+    </Modal>}
+  </div>);
+}
+
+// ─── STOK VARIAN ──────────────────────────────────────────
+function StokVarian({jenis,stokVarian,setStokVarian,showNotif,addTrx,role}){
+  const [activeKat,setActiveKat]=useState("Kain");const [search,setSearch]=useState("");const [modal,setModal]=useState(false);
+  const [f,setF]=useState({jenisId:"",kodeVar:"",tipe:"roll",qty:"",customer:"",tanggal:today()});
+  const [saving,setSaving]=useState(false);const [pg,setPg]=useState(1);const PS=12;
+  const aktif=stokVarian.filter(k=>k.status==="aktif");
+  const jenisForKat=jenis.filter(j=>(j.kategori||"Kain")===activeKat);
+  const selJenis=jenis.find(j=>j.id===f.jenisId);const prefix=selJenis?.kodePrefix||"";
+  const kodeVar_=f.kodeVar.trim().toUpperCase();
+  const kodePreview=selJenis?(prefix?(kodeVar_?`${prefix}-${kodeVar_}`:prefix):(kodeVar_||"–")):"–";
+  const isKain=activeKat==="Kain";
+  const list=useMemo(()=>{let l=aktif.filter(k=>(k.kategori||"Kain")===activeKat);if(search)l=l.filter(k=>k.kode.toLowerCase().includes(search.toLowerCase())||(k.customer||"").toLowerCase().includes(search.toLowerCase())||k.jenisNama.toLowerCase().includes(search.toLowerCase()));return l;},[aktif,activeKat,search]);
+  const paged=list.slice((pg-1)*PS,pg*PS);
+  const openModal=()=>{setF({jenisId:jenisForKat[0]?.id||"",kodeVar:"",tipe:"roll",qty:"",customer:"",tanggal:today()});setModal(true);};
+
+  const save=async()=>{
+    if(!f.jenisId||!f.qty)return showNotif("Lengkapi semua field!","err");
+    if(!prefix&&!f.kodeVar.trim())return showNotif("Kode Varian wajib jika tidak ada prefix!","err");
+    if(isKain&&f.tipe==="potongan"&&!f.customer)return showNotif("Customer wajib!","err");
+    const jk=jenis.find(j=>j.id===f.jenisId);
+    const kode=prefix?(kodeVar_?`${prefix}-${kodeVar_}`:prefix):kodeVar_;
+    const isDup=stokVarian.find(k=>k.kode===kode&&k.status==="aktif"&&(k.kategori||"Kain")===activeKat);
+    if(isDup&&!(isKain&&f.tipe==="potongan"))return showNotif(`Kode ${kode} sudah aktif!`,"err");
+    const id=genId();const qty=parseFloat(f.qty);
+    const customer=isKain&&f.tipe==="potongan"?f.customer:"";
+    const payload={id,kode,jenis_id:f.jenisId,jenis_nama:jk.nama,kode_prefix:jk.kodePrefix||"",warna:kodeVar_||kode,tipe:isKain?f.tipe:"standard",qty:qty,sisa:qty,customer,tanggal:f.tanggal,status:"aktif",kategori:activeKat};
+    const stLocal={id,kode,jenisId:f.jenisId,jenisNama:jk.nama,kodePrefix:jk.kodePrefix||"",warna:kodeVar_||kode,tipe:isKain?f.tipe:"standard",qty,sisa:qty,customer,tanggal:f.tanggal,status:"aktif",kategori:activeKat};
+    setSaving(true);
+    try{await dbUpsert('stok_varian',payload);await dbUpsert('transaksi',{id:genId(),type:"inbound",detail:`${kode} · ${qty} ${jk.satuan||"pcs"}${customer?", "+customer:""}`,qty,satuan:jk.satuan||"pcs",tanggal:jakartaTime()});setStokVarian(p=>[...p,stLocal]);addTrx("inbound",`${kode} masuk`);showNotif(`${activeKat} ${kode} berhasil ditambah!`);setModal(false);}
+    catch(e){showNotif("Gagal: "+e.message,"err");}
+    setSaving(false);
+  };
+
+  const arsip=async k=>{
+    if(role!=="owner")return showNotif("Hanya Owner yang bisa mengarsipkan","err");
+    if(!confirm(`Arsipkan ${k.kode}?`))return;
+    try{await dbPatchStok(k.id,{status:"arsip"});setStokVarian(p=>p.map(x=>x.id===k.id?{...x,status:"arsip"}:x));showNotif("Diarsipkan!");}
+    catch(e){showNotif("Gagal: "+e.message,"err");}
+  };
+
+  const satuanLabel=selJenis?.satuan||"pcs";
+  return(<div>
+    <div className="kat-tabs" style={{marginBottom:14}}>{ALL_KAT.map(cat=><button key={cat} onClick={()=>{setActiveKat(cat);setPg(1);setSearch("");}} style={{padding:"8px 14px",borderRadius:20,border:"none",cursor:"pointer",fontWeight:600,fontSize:13,background:activeKat===cat?(CAT_COLOR[cat]||C.pri):"#f0f0f0",color:activeKat===cat?"#fff":"#555"}}>{CAT_ICON[cat]} {cat}</button>)}</div>
+    <Card>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <input placeholder={`🔍 Cari ${activeKat}...`} value={search} onChange={e=>{setSearch(e.target.value);setPg(1);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:260}}/>
+        <Btn onClick={openModal} bg={CAT_COLOR[activeKat]||C.pri}>+ Tambah {activeKat}</Btn>
+      </div>
+      {jenisForKat.length===0
+        ?<div style={{textAlign:"center",padding:30,color:"#aaa",fontSize:13}}>Belum ada jenis <b>{activeKat}</b>. Tambah di Master Harga.</div>
+        :<>
+          <Tbl>
+            <TH cols={["Kode","Jenis","Warna",...(isKain?["Tipe"]:[]),"Qty","Sisa",...(isKain?["Customer"]:[]),"Tgl",...(role==="owner"?["Aksi"]:[])]}/>
+            <tbody>{paged.map(k=>{const jk=jenis.find(j=>j.id===k.jenisId);const sat=jk?.satuan||"pcs";return(
+              <tr key={k.id}>
+                <TD><div style={{fontFamily:"monospace",fontSize:12,fontWeight:700,color:CAT_COLOR[activeKat]||C.pri}}>{k.kode}</div></TD>
+                <TD>{k.jenisNama}</TD>
+                <TD><Badge label={k.warna||"–"} color={CAT_COLOR[activeKat]||"#5c6bc0"}/></TD>
+                {isKain&&<TD><Badge label={k.tipe} color={k.tipe==="roll"?C.acc:C.warn}/></TD>}
+                <TD>{k.qty} {sat}</TD>
+                <TD><span style={{fontWeight:700,color:k.sisa<1?C.err:C.ok}}>{k.sisa} {sat}</span></TD>
+                {isKain&&<TD>{k.customer||<span style={{color:"#ccc"}}>–</span>}</TD>}
+                <TD style={{fontSize:12}}>{String(k.tanggal).split("T")[0]}</TD>
+                {role==="owner"&&<TD><Ghost onClick={()=>arsip(k)} style={{padding:"5px 10px",fontSize:12,color:C.warn}}>🗃️</Ghost></TD>}
+              </tr>
+            );})}</tbody>
+          </Tbl>
+          <Pg page={pg} total={Math.ceil(list.length/PS)} onChange={setPg}/>
+        </>}
+    </Card>
+    {modal&&<Modal title={`Tambah Stok ${activeKat}`} onClose={()=>setModal(false)}>
+      {jenisForKat.length===0?<div style={{textAlign:"center",padding:20,color:"#aaa"}}>Tambah jenis {activeKat} dulu di Master Harga.</div>
+      :<>
+        <div style={{marginBottom:12}}><label style={{fontSize:12,color:"#555",marginBottom:4,display:"block",fontWeight:600}}>Jenis {activeKat} *</label>
+          <select value={f.jenisId} onChange={e=>setF(x=>({...x,jenisId:e.target.value}))} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:"100%",boxSizing:"border-box"}}>
+            {jenisForKat.map(j=><option key={j.id} value={j.id}>{j.nama} — {fmtRp(j.harga)}/{j.satuan}</option>)}
+          </select>
+        </div>
+        <Inp label="Kode Varian" value={f.kodeVar} onChange={v=>setF(x=>({...x,kodeVar:v.toUpperCase()}))} placeholder={isKain?"024 / NAVY":"HTM-PJG"} note={prefix?"Opsional — kosongkan untuk pakai prefix saja":"Wajib diisi. Otomatis kapital."}/>
+        <div style={{background:"#f0f4ff",borderRadius:8,padding:"10px 14px",marginBottom:14}}><div style={{fontSize:12,color:"#555"}}>Kode lengkap:</div><div style={{fontFamily:"monospace",fontSize:16,fontWeight:700,color:C.pri}}>{kodePreview}</div></div>
+        {isKain&&<div style={{marginBottom:12}}><label style={{fontSize:12,color:"#555",marginBottom:6,display:"block",fontWeight:600}}>Tipe *</label><div style={{display:"flex",gap:8}}>{["roll","potongan"].map(t=><button key={t} onClick={()=>setF(x=>({...x,tipe:t,customer:""}))} style={{flex:1,padding:10,borderRadius:8,border:`2px solid ${f.tipe===t?C.pri:"#ddd"}`,background:f.tipe===t?C.pri+"15":"#fff",color:f.tipe===t?C.pri:"#333",fontWeight:600,cursor:"pointer",fontSize:13}}>{t==="roll"?"🎞️ Roll":"✂️ Potongan"}</button>)}</div></div>}
+        <Inp label={`Jumlah (${satuanLabel}) *`} type="number" value={f.qty} onChange={v=>setF(x=>({...x,qty:v}))} placeholder="100" min="0.1" step={isKain?"0.1":"1"}/>
+        {isKain&&f.tipe==="potongan"&&<Inp label="Nama Customer *" value={f.customer} onChange={v=>setF(x=>({...x,customer:v}))} placeholder="Ibu Sari"/>}
+        <Inp label="Tanggal Masuk" type="date" value={f.tanggal} onChange={v=>setF(x=>({...x,tanggal:v}))}/>
+        {selJenis&&<div style={{background:"#f9fbe7",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13}}>💰 {fmtRp(selJenis.harga)}/{selJenis.satuan}{f.qty&&<span style={{color:"#888"}}> — Total: <b>{fmtRp(selJenis.harga*parseFloat(f.qty||0))}</b></span>}</div>}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}><Ghost onClick={()=>setModal(false)}>Batal</Ghost><Btn onClick={save} loading={saving}>Simpan</Btn></div>
+      </>}
+    </Modal>}
+  </div>);
+}
+
+// ─── BUAT PAKET (+ Lanjutkan Paket untuk finishing) ───────
+function BuatPaket({jenis,stokVarian,pkgs,setPkgs,showNotif,role}){
+  const aktif=stokVarian.filter(k=>k.status==="aktif");
+  // role determines mode:
+  // finishing → only append, no toggle
+  // admin → only new, no toggle
+  // owner → both, with toggle
+  const canNew   = role==="owner"||role==="admin";
+  const canAppend= role==="owner"||role==="finishing";
+  const [mode,setMode]=useState(canNew?"new":"append");
+  const [nama,setNama]=useState("");const [customer,setCustomer]=useState("");const [deskripsi,setDeskripsi]=useState("");
+  const [search,setSearch]=useState("");const [catFilter,setCatFilter]=useState("Semua");
+  const [selected,setSelected]=useState({});const [saving,setSaving]=useState(false);
+  const [appendSearch,setAppendSearch]=useState("");const [appendTarget,setAppendTarget]=useState(null);
+  const [appendItemSearch,setAppendItemSearch]=useState("");const [appendCatFilter,setAppendCatFilter]=useState("Semua");
+  const [appendSelected,setAppendSelected]=useState({});const [appendSaving,setAppendSaving]=useState(false);
+
+  const allPickable=useMemo(()=>aktif.map(k=>{const jk=jenis.find(j=>j.id===k.jenisId);return{id:k.id,type:"varian",nama:`${k.jenisNama} ${k.kode}`,satuan:jk?.satuan||"pcs",kategori:k.kategori||"Kain",stok:k.sisa,harga:jk?.harga||0,customer:k.customer||""};}), [aktif,jenis]);
+  const cats=useMemo(()=>["Semua",...new Set(allPickable.map(i=>i.kategori))],[allPickable]);
+  const filtered=useMemo(()=>{let l=allPickable;if(search)l=l.filter(i=>i.nama.toLowerCase().includes(search.toLowerCase()));if(catFilter!=="Semua")l=l.filter(i=>i.kategori===catFilter);return l;},[allPickable,search,catFilter]);
+  const toggle=useCallback(item=>{setSelected(p=>{if(p[item.id]!==undefined){const{[item.id]:_,...r}=p;return r;}return{...p,[item.id]:"1"};});},[]);
+  const updQty=(id,v)=>{setSelected(p=>({...p,[id]:v}));};
+  const selItems=useMemo(()=>allPickable.filter(i=>selected[i.id]!==undefined),[allPickable,selected]);
+  const hpp=useMemo(()=>selItems.reduce((s,i)=>s+(parseFloat(selected[i.id])||0)*i.harga,0),[selItems,selected]);
+
+  // Append mode state
+  const appendPickable=useMemo(()=>{let l=allPickable;if(role==="finishing")l=l.filter(i=>FINISHING_CATS.includes(i.kategori));if(appendItemSearch)l=l.filter(i=>i.nama.toLowerCase().includes(appendItemSearch.toLowerCase()));if(appendCatFilter!=="Semua")l=l.filter(i=>i.kategori===appendCatFilter);return l;},[allPickable,role,appendItemSearch,appendCatFilter]);
+  const appendCats=useMemo(()=>["Semua",...new Set((role==="finishing"?allPickable.filter(i=>FINISHING_CATS.includes(i.kategori)):allPickable).map(i=>i.kategori))],[allPickable,role]);
+  const appendablePkgs=useMemo(()=>{let l=pkgs.filter(p=>p.status!=="selesai");if(appendSearch)l=l.filter(p=>p.kode.toLowerCase().includes(appendSearch.toLowerCase())||p.nama.toLowerCase().includes(appendSearch.toLowerCase())||(p.customer||"").toLowerCase().includes(appendSearch.toLowerCase()));return l;},[pkgs,appendSearch]);
+  const appendToggle=useCallback(item=>{setAppendSelected(p=>{if(p[item.id]!==undefined){const{[item.id]:_,...r}=p;return r;}return{...p,[item.id]:"1"};});},[]);
+  const appendUpdQty=(id,v)=>{setAppendSelected(p=>({...p,[id]:v}));};
+  const appendSelItems=useMemo(()=>appendPickable.filter(i=>appendSelected[i.id]!==undefined),[appendPickable,appendSelected]);
+  const appendHpp=useMemo(()=>appendSelItems.reduce((s,i)=>s+(parseFloat(appendSelected[i.id])||0)*i.harga,0),[appendSelItems,appendSelected]);
+
+  const save=async()=>{
+    if(!nama)return showNotif("Isi nama paket!","err");if(selItems.length===0)return showNotif("Pilih minimal 1 item!","err");
+    const invalid=selItems.filter(i=>!(parseFloat(selected[i.id])>0));if(invalid.length>0)return showNotif("Isi jumlah yang valid!","err");
+    setSaving(true);
+    try{
+      const kode=await dbGetNextKode();
+      const paket={id:genId(),kode,nama,customer,deskripsi,hpp,tanggal:today(),status:"pending"};
+      const items=selItems.map(i=>({id:genId(),paket_id:paket.id,type:i.type,ref_id:i.id,nama:i.nama,qty:parseFloat(selected[i.id])||0,satuan:i.satuan,harga:i.harga,kategori:i.kategori||""}));
+      await dbSavePaket(paket,items);
+      setPkgs(p=>[{...paket,items},...p]);
+      showNotif(`✅ Paket ${kode} berhasil!`);setNama("");setCustomer("");setDeskripsi("");setSelected({});
+    }catch(e){showNotif("Gagal: "+e.message,"err");}
+    setSaving(false);
+  };
+
+  const appendSave=async()=>{
+    if(!appendTarget)return showNotif("Pilih paket dulu!","err");
+    if(appendSelItems.length===0)return showNotif("Pilih minimal 1 item!","err");
+    const invalid=appendSelItems.filter(i=>!(parseFloat(appendSelected[i.id])>0));if(invalid.length>0)return showNotif("Isi jumlah yang valid!","err");
+    setAppendSaving(true);
+    try{
+      const newItems=appendSelItems.map(i=>({id:genId(),paket_id:appendTarget.id,type:i.type,ref_id:i.id,nama:i.nama,qty:parseFloat(appendSelected[i.id])||0,satuan:i.satuan,harga:i.harga,kategori:i.kategori||""}));
+      const newHpp=await dbAppendPaketItems(appendTarget.id,newItems);
+      setPkgs(p=>p.map(x=>x.id!==appendTarget.id?x:{...x,hpp:newHpp,status:"disiapkan",items:[...x.items,...newItems]}));
+      showNotif(`✅ ${appendSelItems.length} item ditambahkan ke ${appendTarget.kode}! HPP: ${fmtRp(newHpp)}`);
+      setAppendTarget(null);setAppendSelected({});setAppendItemSearch("");
+    }catch(e){showNotif("Gagal: "+e.message,"err");}
+    setAppendSaving(false);
+  };
+
+  return(<div style={{maxWidth:720,margin:"0 auto",width:"100%"}}>
+    {/* Mode toggle — hanya untuk owner */}
+    {canNew&&canAppend&&<div style={{display:"flex",gap:8,marginBottom:14}}>
+      {[{id:"new",icon:"✏️",label:"Buat Paket Baru"},{id:"append",icon:"➕",label:"Lanjutkan Paket"}].map(m=>(
+        <button key={m.id} onClick={()=>{setMode(m.id);setAppendTarget(null);setAppendSelected({});}} style={{flex:1,padding:"11px 8px",borderRadius:10,border:`2px solid ${mode===m.id?C.pri:"#ddd"}`,background:mode===m.id?C.pri+"15":"#fff",color:mode===m.id?C.pri:"#555",fontWeight:700,cursor:"pointer",fontSize:13}}>{m.icon} {m.label}</button>
+      ))}
+    </div>}
+
+    {/* ─── Tambah ke Paket (append mode) ─────────── */}
+    {mode==="append"&&<>
+      {!appendTarget
+        ?<Card><div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:12}}>Pilih Paket yang Akan Dilanjutkan</div>
+          <input placeholder="🔍 Cari kode / nama / customer..." value={appendSearch} onChange={e=>setAppendSearch(e.target.value)} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:"100%",boxSizing:"border-box",marginBottom:12}}/>
+          {appendablePkgs.length===0?<div style={{color:"#aaa",fontSize:13,textAlign:"center",padding:20}}>Tidak ada paket pending / disiapkan</div>
+          :appendablePkgs.slice(0,20).map(p=>(
+            <div key={p.id} onClick={()=>setAppendTarget(p)} style={{padding:"12px 14px",borderRadius:8,border:"1px solid #eee",marginBottom:8,cursor:"pointer"}} onMouseEnter={e=>e.currentTarget.style.background="#f0f4ff"} onMouseLeave={e=>e.currentTarget.style.background=""}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><span style={{fontFamily:"monospace",color:C.pri,fontWeight:700,fontSize:13}}>{p.kode}</span> <span style={{fontWeight:600}}>{p.nama}</span></div>
+                <Badge label={statusLabel(p.status)} color={statusColor(p.status)}/>
+              </div>
+              {p.customer&&<div style={{fontSize:12,color:"#888",marginTop:4}}>👤 {p.customer}</div>}
+              <div style={{fontSize:12,color:C.ok,marginTop:2}}>HPP saat ini: {fmtRp(p.hpp)}</div>
+            </div>
+          ))}
+        </Card>
+        :<>
+          <Card style={{marginBottom:12,background:"#f0f4ff",border:"1px solid "+C.pri}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div><span style={{fontFamily:"monospace",color:C.pri,fontWeight:700}}>{appendTarget.kode}</span> — <b>{appendTarget.nama}</b></div>
+              <Ghost onClick={()=>{setAppendTarget(null);setAppendSelected({});}} style={{padding:"5px 12px",fontSize:12}}>← Ganti</Ghost>
+            </div>
+            {appendTarget.customer&&<div style={{fontSize:12,color:"#888",marginTop:4}}>👤 {appendTarget.customer}</div>}
+            {appendTarget.items.length>0&&<div style={{marginTop:8,fontSize:12,color:"#555"}}><b>Sudah ada:</b> {appendTarget.items.map(i=>i.nama.split(" ").pop()).join(", ")}</div>}
+          </Card>
+          <Card style={{marginBottom:12}}>
+            <div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:10}}>📦 Pilih Material {role==="finishing"?"Finishing":""}</div>
+            <input placeholder="🔍 Cari item..." value={appendItemSearch} onChange={e=>setAppendItemSearch(e.target.value)} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:"100%",boxSizing:"border-box",marginBottom:10}}/>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>{appendCats.map(c=><button key={c} onClick={()=>setAppendCatFilter(c)} style={{padding:"5px 14px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:appendCatFilter===c?C.pri:"#f0f0f0",color:appendCatFilter===c?"#fff":"#555"}}>{c}</button>)}</div>
+            <div style={{maxHeight:280,overflowY:"auto",border:"1px solid #eee",borderRadius:8}}>
+              {appendPickable.length===0?<div style={{textAlign:"center",padding:24,color:"#aaa",fontSize:13}}>Tidak ada stok aktif</div>
+              :appendPickable.map(item=>{const isSel=appendSelected[item.id]!==undefined;return(
+                <div key={item.id} onClick={()=>appendToggle(item)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 16px",cursor:"pointer",background:isSel?"#e8f5e9":"#fff",borderBottom:"1px solid #f5f5f5"}}>
+                  <div><div style={{fontWeight:600,fontSize:14}}>{item.nama}</div><div style={{fontSize:12,color:"#888",marginTop:2,display:"flex",gap:6,alignItems:"center"}}><Badge label={item.kategori} color={CAT_COLOR[item.kategori]||C.acc}/>{item.stok} {item.satuan} · {fmtRp(item.harga)}/{item.satuan}{item.customer&&<span style={{background:"#e3f2fd",color:"#1565c0",padding:"2px 8px",borderRadius:10,fontSize:11,fontWeight:600}}>👤 {item.customer}</span>}</div></div>
+                  <div style={{color:isSel?C.ok:"#ddd",fontSize:24,fontWeight:700}}>{isSel?"✓":"○"}</div>
+                </div>
+              );})}
+            </div>
+          </Card>
+          {appendSelItems.length>0&&<Card>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}><div style={{fontWeight:700,fontSize:14,color:C.pri}}>DIPILIH ({appendSelItems.length})</div><Ghost onClick={()=>setAppendSelected({})} style={{padding:"5px 10px",fontSize:12,color:C.err}}>Bersihkan</Ghost></div>
+            {appendSelItems.map(i=><div key={i.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:"1px solid #f5f5f5"}}>
+              <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{i.nama}</div><div style={{fontSize:11,color:C.ok,marginTop:2}}>{fmtRp(i.harga)}/{i.satuan} = <b>{fmtRp((parseFloat(appendSelected[i.id])||0)*i.harga)}</b></div></div>
+              <input type="number" value={appendSelected[i.id]||""} onChange={e=>appendUpdQty(i.id,e.target.value)} min="0.1" step="0.1" style={{width:72,border:"1px solid #ddd",borderRadius:6,padding:"7px 8px",fontSize:14,textAlign:"center"}}/>
+              <span style={{fontSize:12,color:"#888",width:40}}>{i.satuan}</span>
+              <button onClick={()=>appendToggle(i)} style={{background:"none",border:"none",cursor:"pointer",color:C.err,fontSize:22}}>×</button>
+            </div>)}
+            <div style={{display:"flex",justifyContent:"space-between",padding:"12px 0",borderTop:"2px solid #eee",marginTop:8,fontSize:13}}><span>HPP setelah tambah:</span><span style={{fontWeight:800,fontSize:16,color:C.ok}}>{fmtRp((appendTarget.hpp||0)+appendHpp)}</span></div>
+            <Btn onClick={appendSave} loading={appendSaving} bg={C.dis} style={{width:"100%",padding:"13px",fontSize:15}}>➕ Tambahkan ke {appendTarget.kode}</Btn>
+          </Card>}
+        </>}
+    </>}
+
+    {/* ─── Buat Paket Baru ─────────────────────────── */}
+    {mode==="new"&&<>
+      <Card style={{marginBottom:14}}><div style={{fontWeight:700,fontSize:15,color:C.pri,marginBottom:16}}>✏️ Buat Template Paket Baru</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><Inp label="Nama Paket *" value={nama} onChange={setNama} placeholder="Gamis Sulaiman"/><Inp label="Nama Customer" value={customer} onChange={setCustomer} placeholder="Ibu Sari"/></div><Inp label="Deskripsi (opsional)" value={deskripsi} onChange={setDeskripsi} placeholder="gamis lengan panjang warna hitam"/></Card>
+      <Card style={{marginBottom:14}}>
+        <div style={{fontWeight:700,fontSize:15,color:C.pri,marginBottom:12}}>📦 Pilih Stok</div>
+        <input placeholder="🔍 Cari item..." value={search} onChange={e=>setSearch(e.target.value)} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:"100%",boxSizing:"border-box",marginBottom:10}}/>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>{cats.map(c=><button key={c} onClick={()=>setCatFilter(c)} style={{padding:"5px 14px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:catFilter===c?C.pri:"#f0f0f0",color:catFilter===c?"#fff":"#555"}}>{c}</button>)}</div>
+        <div style={{maxHeight:300,overflowY:"auto",border:"1px solid #eee",borderRadius:8}}>
+          {filtered.length===0?<div style={{textAlign:"center",padding:24,color:"#aaa",fontSize:13}}>Tidak ada stok aktif</div>
+          :filtered.map(item=>{const isSel=selected[item.id]!==undefined;return(
+            <div key={item.id} onClick={()=>toggle(item)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 16px",cursor:"pointer",background:isSel?"#e8f5e9":"#fff",borderBottom:"1px solid #f5f5f5"}}>
+              <div><div style={{fontWeight:600,fontSize:14}}>{item.nama}</div><div style={{fontSize:12,color:"#888",marginTop:2,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}><Badge label={item.kategori} color={CAT_COLOR[item.kategori]||C.acc}/>Stok: {item.stok} {item.satuan} · {fmtRp(item.harga)}/{item.satuan}{item.customer&&<span style={{background:"#e3f2fd",color:"#1565c0",padding:"2px 8px",borderRadius:10,fontSize:11,fontWeight:600}}>👤 {item.customer}</span>}</div></div>
+              <div style={{color:isSel?C.ok:"#ddd",fontSize:24,fontWeight:700,width:32,textAlign:"center"}}>{isSel?"✓":"○"}</div>
+            </div>
+          );})}
+        </div>
+      </Card>
+      {selItems.length>0&&<Card>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}><div style={{fontWeight:700,fontSize:15,color:C.pri}}>ITEM DIPILIH ({selItems.length})</div><Ghost onClick={()=>setSelected({})} style={{padding:"6px 12px",fontSize:12,color:C.err}}>🗑️ Bersihkan</Ghost></div>
+        {selItems.map(i=><div key={i.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid #f5f5f5"}}>
+          <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{i.nama}</div><div style={{fontSize:11,color:C.ok,marginTop:2}}>{fmtRp(i.harga)}/{i.satuan} = <b>{fmtRp((parseFloat(selected[i.id])||0)*i.harga)}</b></div></div>
+          <input type="number" value={selected[i.id]||""} onChange={e=>updQty(i.id,e.target.value)} min="0.1" step="0.1" style={{width:72,border:"1px solid #ddd",borderRadius:6,padding:"7px 8px",fontSize:14,textAlign:"center"}}/>
+          <span style={{fontSize:12,color:"#888",width:40,flexShrink:0}}>{i.satuan}</span>
+          <button onClick={()=>toggle(i)} style={{background:"none",border:"none",cursor:"pointer",color:C.err,fontSize:22,lineHeight:1,padding:0}}>×</button>
+        </div>)}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0",borderTop:"2px solid #eee",marginTop:8}}><span style={{fontWeight:700,fontSize:15}}>Total HPP</span><span style={{fontWeight:800,fontSize:22,color:C.ok}}>{fmtRp(hpp)}</span></div>
+        <Btn onClick={save} loading={saving} style={{width:"100%",padding:"13px",fontSize:15}}>💾 Simpan Paket</Btn>
+      </Card>}
+    </>}
+  </div>);
+}
+
+// ─── DAFTAR PAKET ─────────────────────────────────────────
+function DaftarPaket({pkgs,setPkgs,onView,showNotif,role}){
+  const canEdit=role==="owner";const [search,setSearch]=useState("");const [statusF,setStatusF]=useState("all");const [pg,setPg]=useState(1);const PS=10;
+  const list=useMemo(()=>{let l=[...pkgs].sort((a,b)=>String(b.tanggal).localeCompare(String(a.tanggal)));if(search)l=l.filter(p=>p.nama.toLowerCase().includes(search.toLowerCase())||p.kode.toLowerCase().includes(search.toLowerCase())||(p.customer||"").toLowerCase().includes(search.toLowerCase()));if(statusF!=="all")l=l.filter(p=>p.status===statusF);return l;},[pkgs,search,statusF]);
+  const paged=list.slice((pg-1)*PS,pg*PS);
+  const hapus=async p=>{if(!confirm(`Hapus ${p.nama}?`))return;try{await dbDelete('pakets',p.id);setPkgs(prev=>prev.filter(x=>x.id!==p.id));showNotif("Dihapus!");}catch(e){showNotif("Gagal: "+e.message,"err");}};
+  return(<div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:10,marginBottom:14}}>
+      <SC icon="📋" label="Total Paket" value={pkgs.length} color={C.pri}/>
+      <SC icon="⏳" label="Pending" value={pkgs.filter(p=>p.status==="pending").length} color={C.warn}/>
+      <SC icon="🔵" label="Disiapkan" value={pkgs.filter(p=>p.status==="disiapkan").length} color={C.dis}/>
+      <SC icon="✅" label="Selesai" value={pkgs.filter(p=>p.status==="selesai").length} color={C.ok}/>
+    </div>
+    <Card>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+        <input placeholder="🔍 Cari nama / kode / customer..." value={search} onChange={e=>{setSearch(e.target.value);setPg(1);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,flex:1,minWidth:200,maxWidth:320}}/>
+        <select value={statusF} onChange={e=>{setStatusF(e.target.value);setPg(1);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13}}>
+          <option value="all">Semua Status</option><option value="pending">⏳ Pending</option><option value="disiapkan">🔵 Disiapkan</option><option value="selesai">✅ Selesai</option>
+        </select>
+      </div>
+      {paged.length===0?<div style={{textAlign:"center",padding:50,color:"#ccc"}}><div style={{fontSize:48}}>📋</div><div style={{marginTop:10}}>Tidak ada paket</div></div>
+      :<><Tbl><TH cols={["Kode","Nama Paket","Customer","HPP","Tanggal","Status","Aksi"]}/><tbody>{paged.map(p=>(
+        <tr key={p.id}><TD style={{whiteSpace:"nowrap"}}><span onClick={()=>{navigator.clipboard.writeText(p.kode).then(()=>showNotif("📋 "+p.kode+" disalin!"));}} style={{fontFamily:"monospace",fontSize:11,color:C.pri,fontWeight:700,cursor:"pointer",textDecoration:"underline",textDecorationStyle:"dotted"}} title="Klik untuk copy">{p.kode}</span></TD>
+        <TD><div style={{fontWeight:600}}>{p.nama}</div>{p.deskripsi&&<div style={{fontSize:11,color:"#aaa",marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:180}}>{p.deskripsi}</div>}</TD>
+        <TD>{p.customer||<span style={{color:"#ccc"}}>–</span>}</TD>
+        <TD><span style={{fontWeight:700,color:C.ok}}>{fmtRp(p.hpp)}</span></TD>
+        <TD style={{fontSize:12}}>{String(p.tanggal).split("T")[0]}</TD>
+        <TD><Badge label={statusLabel(p.status)} color={statusColor(p.status)}/></TD>
+        <TD><div style={{display:"flex",gap:6}}><Ghost onClick={()=>onView(p)} style={{padding:"5px 10px",fontSize:12}}>👁️</Ghost>{canEdit&&<Ghost onClick={()=>hapus(p)} style={{padding:"5px 10px",fontSize:12,color:C.err}}>🗑️</Ghost>}</div></TD>
+        </tr>))}
+      </tbody></Tbl><Pg page={pg} total={Math.ceil(list.length/PS)} onChange={setPg}/></>}
+    </Card>
+  </div>);
+}
+
+// ─── MENU ORDER ───────────────────────────────────────────
+function MenuOrder({pkgs,setPkgs,stokVarian,setStokVarian,addTrx,showNotif,role}){
+  const [input,setInput]=useState("");const [found,setFound]=useState(null);const [notFound,setNotFound]=useState(false);
+  const [saving,setSaving]=useState(false);const [debugInfo,setDebugInfo]=useState(null);
+  const [forceModal,setForceModal]=useState(false);const [forceSelected,setForceSelected]=useState({});const [forceLoading,setForceLoading]=useState(false);
+
+  const doSearch=()=>{const p=pkgs.find(x=>x.kode===input.trim());if(p){setFound(p);setNotFound(false);setDebugInfo(null);}else{setFound(null);setNotFound(true);}};
+
+  const runProcess=async({skipFinishing=false,selectedItems=[]}={})=>{
+    setSaving(true);setDebugInfo(null);
+    try{
+      const res=await dbProcessOrder(found.id,{skipFinishing,forceItems:selectedItems});
+      if(!res.success){showNotif("❌ "+res.error,"err");setSaving(false);return;}
+      if(res.log){const failed=res.log.filter(l=>l.includes("NOT FOUND"));if(failed.length>0){setDebugInfo({log:res.log});showNotif("⚠️ "+failed.length+" item tidak ditemukan!","err");setSaving(false);return;}}
+      if(res.processedItems){setStokVarian(p=>p.map(k=>{const pi=res.processedItems.find(x=>x.ref_id===k.id);return pi?{...k,sisa:pi.newSisa,status:pi.status}:k;}));}
+      setPkgs(p=>p.map(x=>x.id===found.id?{...x,status:"selesai"}:x));
+      addTrx("outbound",`${found.nama} · ${found.kode}`);
+      showNotif(`✅ Order ${found.kode} berhasil diproses!`);
+      setFound(null);setInput("");setForceModal(false);
+    }catch(e){showNotif("Gagal: "+e.message,"err");}
+    setSaving(false);
+  };
+
+  const forceDeduct=async()=>{
+    const sel=found.items.filter(i=>forceSelected[i.id]);
+    if(sel.length===0)return showNotif("Pilih minimal 1 item!","err");
+    setForceLoading(true);
+    try{const res=await dbProcessOrder(found.id,{forceItems:sel,skipFinishing:true});if(res.log)setDebugInfo({log:res.log});if(res.allProcessed){if(res.processedItems)setStokVarian(p=>p.map(k=>{const pi=res.processedItems.find(x=>x.ref_id===k.id);return pi?{...k,sisa:pi.newSisa,status:pi.status}:k;}));addTrx("outbound",`${found.nama} · ${found.kode} (koreksi)`);showNotif(`✅ Koreksi berhasil — ${sel.length} item dipotong`);setForceModal(false);setFound(null);setInput("");}else showNotif("⚠️ Ada item tidak ditemukan, lihat debug","err");}
+    catch(e){showNotif("Gagal: "+e.message,"err");}
+    setForceLoading(false);
+  };
+
+  return(<div style={{maxWidth:600,margin:"0 auto",width:"100%"}}>
+    <Card><div style={{textAlign:"center",fontWeight:700,fontSize:16,color:C.pri,marginBottom:20}}>🔍 Scan / Input Kode Paket</div>
+      <div style={{display:"flex",gap:8}}><input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&doSearch()} placeholder="Scan barcode atau ketik kode paket..." autoFocus style={{flex:1,border:"2px solid #ddd",borderRadius:10,padding:"12px 16px",fontSize:15,outline:"none",boxSizing:"border-box"}}/><Btn onClick={doSearch} style={{padding:"12px 20px",fontSize:14}}>Cari</Btn></div>
+      {notFound&&<div style={{marginTop:14,padding:12,background:"#fff3f3",borderRadius:8,color:C.err,fontSize:13,textAlign:"center"}}>❌ Kode paket tidak ditemukan</div>}
+    </Card>
+    {found&&<Card style={{marginTop:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}><div style={{fontWeight:700,fontSize:15,color:C.pri}}>📋 Detail Paket</div><Badge label={statusLabel(found.status)} color={statusColor(found.status)}/></div>
+      <div style={{background:"#f9f9f9",borderRadius:8,padding:12,marginBottom:14}}><div style={{fontWeight:700,fontSize:15}}>{found.nama}</div>{found.customer&&<div style={{fontSize:12,color:"#888",marginTop:2}}>👤 {found.customer}</div>}<div style={{fontFamily:"monospace",fontSize:12,color:"#aaa",marginTop:4}}>{found.kode}</div></div>
+      {found.items.map((it,i)=><div key={i} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f5f5f5",fontSize:13}}><span>{it.nama}</span><span style={{fontWeight:600}}>{it.qty} {it.satuan}</span></div>)}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderTop:"2px solid #eee",marginTop:6}}><span style={{fontWeight:700}}>Total HPP</span><span style={{fontWeight:700,fontSize:18,color:C.ok}}>{fmtRp(found.hpp)}</span></div>
+
+      {found.status==="selesai"&&<>
+        <div style={{marginTop:10,padding:12,background:"#e8f5e9",borderRadius:8,color:C.ok,textAlign:"center",fontSize:13,marginBottom:8}}>✅ Paket ini sudah diproses</div>
+        {role==="owner"&&<Btn onClick={()=>{setForceSelected({});setForceModal(true);}} bg={C.warn} style={{width:"100%",fontSize:13,padding:"10px"}}>🔧 Koreksi Stok (pilih item)</Btn>}
+      </>}
+
+      {found.status==="disiapkan"&&
+        <Btn onClick={()=>runProcess()} loading={saving} bg={C.ok} style={{width:"100%",marginTop:14,padding:"13px",fontSize:15}}>✅ Konfirmasi & Keluarkan Stok</Btn>
+      }
+
+      {found.status==="pending"&&<div style={{marginTop:10}}>
+        <div style={{padding:14,background:"#fff8e1",borderRadius:8,border:"1px solid "+C.warn,fontSize:13,color:"#e65100",textAlign:"center",marginBottom:8}}>
+          ⏳ Paket ini belum siap.<br/>Tunggu PIC Finishing menambahkan material.
+        </div>
+        {role==="owner"&&<Btn onClick={()=>runProcess({skipFinishing:true})} loading={saving} bg={C.warn} style={{width:"100%",fontSize:13,padding:"11px"}}>⚡ Skip Finishing & Proses Sekarang</Btn>}
+      </div>}
+
+      {debugInfo&&<Card style={{marginTop:12,border:"2px solid "+C.warn}}>
+        <div style={{fontWeight:700,fontSize:13,color:C.warn,marginBottom:8}}>🔍 Debug Info</div>
+        {debugInfo.log.map((l,i)=><div key={i} style={{fontSize:12,padding:"4px 8px",marginBottom:4,borderRadius:6,background:l.includes("OK")?"#e8f5e9":l.includes("NOT FOUND")||l.includes("SKIP")?"#fff3f3":"#f5f5f5",color:l.includes("OK")?C.ok:l.includes("NOT FOUND")||l.includes("SKIP")?C.err:"#555"}}>{l}</div>)}
+      </Card>}
+    </Card>}
+
+    {forceModal&&found&&<Modal title="🔧 Koreksi Stok" onClose={()=>setForceModal(false)} w={500}>
+      <div style={{background:"#fff3e0",borderRadius:8,padding:"10px 14px",marginBottom:14,fontSize:13,color:C.warn}}>⚠️ Centang HANYA item yang belum terpotong.</div>
+      {found.items.map(it=>(<div key={it.id} onClick={()=>setForceSelected(p=>({...p,[it.id]:!p[it.id]}))} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 12px",marginBottom:6,borderRadius:8,border:`1px solid ${forceSelected[it.id]?C.warn:"#eee"}`,background:forceSelected[it.id]?"#fff8f0":"#fff",cursor:"pointer"}}>
+        <div style={{width:20,height:20,borderRadius:4,border:`2px solid ${forceSelected[it.id]?C.warn:"#ddd"}`,background:forceSelected[it.id]?C.warn:"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{forceSelected[it.id]&&<span style={{color:"#fff",fontSize:13,fontWeight:700}}>✓</span>}</div>
+        <div><div style={{fontWeight:600,fontSize:13}}>{it.nama}</div><div style={{fontSize:12,color:"#888"}}>{it.qty} {it.satuan}</div></div>
+      </div>))}
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+        <Ghost onClick={()=>setForceModal(false)}>Batal</Ghost>
+        <Btn onClick={forceDeduct} loading={forceLoading} bg={C.warn} disabled={!Object.values(forceSelected).some(Boolean)}>🔧 Potong Stok Terpilih</Btn>
+      </div>
+    </Modal>}
+  </div>);
+}
+
+// ─── INBOUND / OUTBOUND ───────────────────────────────────
+function InboundOutbound({jenis,stokVarian,setStokVarian,addTrx,showNotif,role}){
+  const [tab,setTab]=useState("inbound");const [saving,setSaving]=useState(false);
+  const [vf,setVF]=useState({katFilter:"Kain",varianId:"",qty:"",tanggal:today(),ket:""});
+  const aktif=stokVarian.filter(k=>k.status==="aktif");
+  const katsForRole=role==="finishing"?FINISHING_CATS:ALL_KAT;
+  const varianForKat=useMemo(()=>aktif.filter(k=>(k.kategori||"Kain")===vf.katFilter),[aktif,vf.katFilter]);
+  const selVarian=stokVarian.find(k=>k.id===vf.varianId);const selJK=selVarian?jenis.find(j=>j.id===selVarian.jenisId):null;
+
+  // For finishing: inbound tab uses FINISHING_CATS filter  
+  if(!katsForRole.includes(vf.katFilter)&&katsForRole.length>0) setVF(x=>({...x,katFilter:katsForRole[0],varianId:""}));
+
+  const save=async()=>{
+    if(!vf.varianId||!vf.qty||parseFloat(vf.qty)<=0)return showNotif("Lengkapi semua field!","err");
+    const q=parseFloat(vf.qty);
+    if(tab==="outbound"&&(selVarian?.sisa||0)<q)return showNotif(`Sisa stok hanya ${selVarian?.sisa}!`,"err");
+    const newSisa=tab==="inbound"?+((selVarian?.sisa||0)+q).toFixed(3):+Math.max(0,(selVarian?.sisa||0)-q).toFixed(3);
+    const autoArsip=tab==="outbound"&&newSisa<=0&&selVarian?.kategori==="Kain";
+    const newStatus=autoArsip?"arsip":"aktif";
+    const sat=selJK?.satuan||"pcs";
+    const detail=`${selVarian?.kode} · ${q} ${sat}${tab==="outbound"&&vf.ket?" ("+vf.ket+")":vf.ket?" ("+vf.ket+")":""}`;
+    setSaving(true);
+    try{
+      await dbPatchStok(selVarian.id,{sisa:newSisa,status:newStatus});
+      await dbUpsert('transaksi',{id:genId(),type:tab,detail,qty:q,satuan:sat,tanggal:jakartaTime()});
+      setStokVarian(p=>p.map(k=>k.id===selVarian.id?{...k,sisa:newSisa,status:newStatus}:k));
+      addTrx(tab,detail);showNotif(`✅ ${selVarian.kode} ${tab==="inbound"?"+":"-"}${q} ${sat}`);
+      setVF(x=>({...x,qty:"",ket:""}));
+    }catch(e){showNotif("Gagal: "+e.message,"err");}
+    setSaving(false);
+  };
+
+  const tabBtn=(id,label,color)=><button onClick={()=>setTab(id)} style={{flex:1,padding:"10px 8px",borderRadius:8,border:`2px solid ${tab===id?color:"#ddd"}`,background:tab===id?color+"15":"#fff",color:tab===id?color:"#555",fontWeight:700,cursor:"pointer",fontSize:13}}>{label}</button>;
+
+  return(<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}>
+    <Card>
+      <div style={{display:"flex",gap:8,marginBottom:18}}>{tabBtn("inbound","📥 Inbound",C.ok)}{tabBtn("outbound","📤 Outbound",C.err)}</div>
+      <div style={{background:tab==="outbound"?"#fff3e0":"#e8f5e9",borderRadius:8,padding:"8px 12px",marginBottom:14,fontSize:12,color:tab==="outbound"?C.warn:C.ok}}>
+        {tab==="outbound"?"⚠️ Outbound untuk koreksi / cacat / rusak":"📥 Inbound untuk koreksi tambah stok"}
+      </div>
+      <div style={{marginBottom:12}}><label style={{fontSize:12,color:"#555",marginBottom:4,display:"block",fontWeight:600}}>Kategori</label>
+        <div className="kat-tabs">{katsForRole.map(cat=><button key={cat} onClick={()=>setVF(x=>({...x,katFilter:cat,varianId:""}))} style={{padding:"5px 12px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:vf.katFilter===cat?(CAT_COLOR[cat]||C.pri):"#f0f0f0",color:vf.katFilter===cat?"#fff":"#555"}}>{cat}</button>)}</div>
+      </div>
+      <div style={{marginBottom:12}}><label style={{fontSize:12,color:"#555",marginBottom:4,display:"block",fontWeight:600}}>Pilih {vf.katFilter} *</label>
+        {varianForKat.length===0?<div style={{color:"#aaa",fontSize:13,padding:"10px 0"}}>Tidak ada stok aktif</div>
+        :<select value={vf.varianId} onChange={e=>setVF(x=>({...x,varianId:e.target.value}))} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:"100%",boxSizing:"border-box"}}>
+          <option value="">— Pilih item —</option>
+          {varianForKat.map(k=>{const jk=jenis.find(j=>j.id===k.jenisId);return<option key={k.id} value={k.id}>{k.jenisNama} {k.kode} — sisa: {k.sisa} {jk?.satuan||""}</option>;})}
+        </select>}
+      </div>
+      {selVarian&&<div style={{background:"#f9f9f9",borderRadius:8,padding:"10px 12px",marginBottom:12,fontSize:13}}><div style={{display:"flex",justifyContent:"space-between"}}><span>Sisa saat ini:</span><b style={{color:selVarian.sisa<1?C.err:C.ok}}>{selVarian.sisa} {selJK?.satuan||""}</b></div></div>}
+      <Inp label={`Jumlah (${selJK?.satuan||"pcs"}) *`} type="number" value={vf.qty} onChange={v=>setVF(x=>({...x,qty:v}))} placeholder="1" min="0.1" step="0.1"/>
+      <Inp label="Keterangan" value={vf.ket} onChange={v=>setVF(x=>({...x,ket:v}))} placeholder={tab==="inbound"?"Koreksi stok":"Kain cacat / rusak"}/>
+      {vf.qty&&selVarian&&<div style={{background:tab==="outbound"?"#fff3e0":"#e8f5e9",borderRadius:8,padding:"10px 12px",marginBottom:12,fontSize:13}}>Sisa setelah: <b>{tab==="inbound"?+((selVarian.sisa||0)+parseFloat(vf.qty||0)).toFixed(3):+Math.max(0,(selVarian.sisa||0)-parseFloat(vf.qty||0)).toFixed(3)}</b> {selJK?.satuan||""}</div>}
+      <Btn onClick={save} loading={saving} disabled={!vf.varianId} bg={tab==="inbound"?C.ok:C.err} style={{width:"100%"}}>{tab==="inbound"?"✅ Simpan Inbound":"✅ Simpan Outbound"}</Btn>
+    </Card>
+    <Card><div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:12}}>📊 Stok {vf.katFilter} Aktif</div>
+      <div style={{maxHeight:400,overflowY:"auto"}}>
+        {varianForKat.length===0?<div style={{color:"#aaa",fontSize:13}}>Tidak ada stok aktif</div>
+        :varianForKat.map(k=>{const jk=jenis.find(j=>j.id===k.jenisId);return(
+          <div key={k.id} onClick={()=>setVF(x=>({...x,varianId:k.id}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 8px",borderBottom:"1px solid #f5f5f5",borderRadius:6,cursor:"pointer",background:vf.varianId===k.id?"#f0f4ff":"transparent"}}>
+            <div><div style={{fontWeight:600,fontSize:13,fontFamily:"monospace"}}>{k.kode}</div><div style={{fontSize:11,color:"#aaa"}}>{k.jenisNama}</div></div>
+            <div style={{textAlign:"right"}}><span style={{fontWeight:700,fontSize:15,color:k.sisa<1?C.err:C.ok}}>{k.sisa}</span><span style={{fontSize:12,color:"#aaa",marginLeft:4}}>{jk?.satuan||""}</span></div>
+          </div>
+        );})}
+      </div>
+    </Card>
+  </div>);
+}
+
+// ─── RIWAYAT ──────────────────────────────────────────────
+function Riwayat({trxs}){
+  const [pg,setPg]=useState(1);const [filter,setFilter]=useState("all");const PS=15;
+  const list=filter==="all"?trxs:trxs.filter(t=>t.type===filter);const paged=list.slice((pg-1)*PS,pg*PS);
+  const fmtDt=ts=>{if(!ts)return"–";if(typeof ts==="string"&&ts.includes("/"))return ts.slice(0,16);try{return new Date(ts).toLocaleString("id-ID",{timeZone:"Asia/Jakarta",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",hour12:false});}catch{return String(ts);}};
+  return(<Card>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}><div style={{fontWeight:700,fontSize:14,color:C.pri}}>📜 Riwayat Transaksi</div><select value={filter} onChange={e=>{setFilter(e.target.value);setPg(1);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"8px 12px",fontSize:13}}><option value="all">Semua</option><option value="inbound">Inbound</option><option value="outbound">Outbound</option></select></div>
+    {paged.length===0?<div style={{textAlign:"center",padding:40,color:"#ccc"}}>Belum ada transaksi</div>
+    :<><Tbl><TH cols={["Waktu","Tipe","Qty","Keterangan"]}/><tbody>{paged.map(t=><tr key={t.id}><TD style={{whiteSpace:"nowrap",fontSize:12}}>{fmtDt(t.tanggal)}</TD><TD><Badge label={t.type} color={t.type==="inbound"?C.ok:C.warn}/></TD><TD style={{whiteSpace:"nowrap",fontWeight:600,color:t.type==="inbound"?C.ok:C.warn}}>{t.qty!==undefined&&t.qty!==""?`${t.type==="inbound"?"+":"-"}${toNum(t.qty)} ${t.satuan||""}`:"-"}</TD><TD style={{whiteSpace:"pre-line"}}>{t.detail}</TD></tr>)}</tbody></Tbl><Pg page={pg} total={Math.ceil(list.length/PS)} onChange={setPg}/></>}
+  </Card>);
+}
+
+// ─── REKAP BULANAN ────────────────────────────────────────
+function RekapBulanan({trxs,showNotif}){
+  const now=new Date();const [month,setMonth]=useState(now.getMonth());const [year,setYear]=useState(now.getFullYear());
+  const [saving,setSaving]=useState(false);const [rekapData,setRekapData]=useState(null);
+  const MONTHS=["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+  const filtered=useMemo(()=>trxs.filter(t=>{const tgl=String(t.tanggal);let d;if(tgl.match(/^\d{2}\/\d{2}\/\d{4}/)){const pts=tgl.split("/");d=new Date(parseInt(pts[2]),parseInt(pts[1])-1,parseInt(pts[0]));}else{d=new Date(tgl);}return d&&!isNaN(d)&&d.getMonth()===month&&d.getFullYear()===year;}),[trxs,month,year]);
+  const simpan=async()=>{setSaving(true);try{const r=await dbGenerateRecap(month,year);setRekapData(r);showNotif("Rekap disimpan!");}catch(e){showNotif("Gagal: "+e.message,"err");}setSaving(false);};
+  const BD_COLS=[{key:"kain_meter",label:"Kain",sat:"meter"},{key:"interlining_lembar",label:"Interlining",sat:"lbr"},{key:"resletting_pcs",label:"Resletting",sat:"pcs"},{key:"benang_cone",label:"Benang",sat:"cone"},{key:"kancing_pcs",label:"Kancing",sat:"pcs"},{key:"pin_pcs",label:"Pin",sat:"pcs"},{key:"kabak_pcs",label:"Kabak",sat:"pcs"},{key:"tarboosh_pcs",label:"Tarboosh",sat:"pcs"},{key:"plastikzipper_pcs",label:"Plastik Zipper",sat:"pcs"},{key:"hardbox_pcs",label:"Hardbox",sat:"pcs"},{key:"mika_pcs",label:"Mika",sat:"pcs"},{key:"kardus_pcs",label:"Kardus",sat:"pcs"}];
+  return(<div>
+    <Card style={{marginBottom:14}}><div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}><select value={month} onChange={e=>{setMonth(parseInt(e.target.value));setRekapData(null);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13}}>{MONTHS.map((m,i)=><option key={i} value={i}>{m}</option>)}</select><select value={year} onChange={e=>{setYear(parseInt(e.target.value));setRekapData(null);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13}}>{[2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}</select><span style={{fontWeight:700,fontSize:15,color:C.pri}}>Rekap {MONTHS[month]} {year}</span><Btn onClick={simpan} loading={saving} style={{marginLeft:"auto",padding:"8px 16px",fontSize:12}}>💾 Generate & Simpan Rekap</Btn></div></Card>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(100px,1fr))",gap:10,marginBottom:14}}>
+      <SC icon="📥" label="Inbound" value={filtered.filter(t=>t.type==="inbound").length+" trx"} color={C.ok}/>
+      <SC icon="📤" label="Outbound" value={filtered.filter(t=>t.type==="outbound").length+" trx"} color={C.warn}/>
+      <SC icon="📊" label="Total Trx" value={filtered.length} color={C.pri}/>
+      {rekapData&&<SC icon="📋" label="Paket Selesai" value={rekapData.total_paket||0} color={C.dis}/>}
+      {rekapData&&<SC icon="💰" label="Total HPP" value={fmtRp(rekapData.total_hpp||0)} color={C.ok}/>}
+    </div>
+    {rekapData&&<Card style={{marginBottom:14}}><div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:12}}>📦 Breakdown Material Terpakai</div><Tbl><TH cols={["Kategori","Jumlah","Satuan"]}/><tbody>{BD_COLS.filter(c=>(rekapData[c.key]||0)>0).map(c=><tr key={c.key}><TD><b>{c.label}</b></TD><TD style={{fontWeight:700,color:C.ok}}>{rekapData[c.key]}</TD><TD>{c.sat}</TD></tr>)}{BD_COLS.every(c=>!rekapData[c.key])&&<tr><td colSpan={3} style={{textAlign:"center",padding:20,color:"#ccc"}}>Belum ada data — pastikan kolom kategori terisi di paket_items</td></tr>}</tbody></Tbl></Card>}
+    <Card><div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:12}}>Detail Transaksi</div>{filtered.length===0?<div style={{textAlign:"center",padding:40,color:"#ccc"}}>Tidak ada transaksi bulan ini</div>:<Tbl><TH cols={["Tipe","Keterangan","Tanggal"]}/><tbody>{filtered.map(t=><tr key={t.id}><TD><Badge label={t.type} color={t.type==="inbound"?C.ok:C.warn}/></TD><TD style={{whiteSpace:"pre-line",fontSize:13}}>{t.detail}</TD><TD style={{fontSize:12,whiteSpace:"nowrap"}}>{String(t.tanggal).slice(0,16)}</TD></tr>)}</tbody></Tbl>}</Card>
+  </div>);
+}
+
+// ─── ARSIP VARIAN ─────────────────────────────────────────
+function ArsipVarian(){
+  const [list,setList]=useState([]);const [loaded,setLoaded]=useState(false);const [loading,setLoading]=useState(false);
+  const [search,setSearch]=useState("");const [katFilter,setKatFilter]=useState("Semua");const [pg,setPg]=useState(1);const PS=12;
+  const load=async()=>{setLoading(true);try{const {data}=await sb.from('arsip_kain').select('*');setList(data||[]);setLoaded(true);}catch(e){}setLoading(false);};
+  const filtered=useMemo(()=>{let l=list;if(katFilter!=="Semua")l=l.filter(k=>(k.kategori||"Kain")===katFilter);if(search)l=l.filter(k=>k.kode.toLowerCase().includes(search.toLowerCase())||(k.jenis_nama||"").toLowerCase().includes(search.toLowerCase())||(k.customer||"").toLowerCase().includes(search.toLowerCase()));return l;},[list,katFilter,search]);
+  const paged=filtered.slice((pg-1)*PS,pg*PS);
+  if(!loaded)return(<Card style={{textAlign:"center",padding:40}}><div style={{fontSize:40,marginBottom:12}}>🗃️</div><div style={{color:"#888",marginBottom:16,fontSize:13}}>Data arsip dimuat saat dibutuhkan.</div><Btn onClick={load} loading={loading}>Muat Data Arsip</Btn></Card>);
+  return(<Card>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+      <div style={{fontWeight:700,fontSize:14,color:C.pri}}>🗃️ Arsip Varian <span style={{fontSize:12,color:"#aaa",fontWeight:400}}>({filtered.length})</span></div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <select value={katFilter} onChange={e=>{setKatFilter(e.target.value);setPg(1);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"8px 12px",fontSize:13}}><option value="Semua">Semua</option>{ALL_KAT.map(c=><option key={c} value={c}>{c}</option>)}</select>
+        <input placeholder="🔍 Cari..." value={search} onChange={e=>{setSearch(e.target.value);setPg(1);}} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:160}}/>
+        <Ghost onClick={load} style={{padding:"8px 12px",fontSize:12}}>🔄</Ghost>
+      </div>
+    </div>
+    {filtered.length===0?<div style={{textAlign:"center",padding:40,color:"#ccc"}}>Tidak ada item di arsip</div>
+    :<><Tbl><TH cols={["Kode","Jenis","Warna","Qty","Customer","Tgl Arsip"]}/><tbody>{paged.map(k=><tr key={k.id} style={{opacity:.7}}><TD><span style={{fontFamily:"monospace",fontSize:12,fontWeight:700}}>{k.kode}</span></TD><TD>{k.jenis_nama}</TD><TD><Badge label={k.warna||"–"} color="#9e9e9e"/></TD><TD>{k.qty}</TD><TD>{k.customer||"–"}</TD><TD style={{fontSize:12}}>{String(k.arsip_tanggal||k.tanggal).slice(0,16)}</TD></tr>)}</tbody></Tbl><Pg page={pg} total={Math.ceil(filtered.length/PS)} onChange={setPg}/></>}
+  </Card>);
+}
+
+// ─── MENU CONFIG ──────────────────────────────────────────
+const ALL_MENU = [
+  {id:"dashboard",    icon:"🏠",label:"Dashboard"},
+  {id:"nilai-stok",   icon:"💰",label:"Nilai Stok"},
+  {id:"master-harga", icon:"🏷️",label:"Master Harga"},
+  {id:"stok-varian",  icon:"🧵",label:"Stok Varian"},
+  {id:"buat-paket",   icon:"✏️",label:"Buat Paket"},
+  {id:"daftar-paket", icon:"📋",label:"Daftar Paket"},
+  {id:"menu-order",   icon:"🔍",label:"Menu Order"},
+  {id:"inbound",      icon:"📥",label:"Inbound / Outbound"},
+  {id:"riwayat",      icon:"📜",label:"Riwayat"},
+  {id:"rekap",        icon:"📊",label:"Rekap Bulanan"},
+  {id:"arsip",        icon:"🗃️",label:"Arsip Varian"},
+];
+const ADMIN_IDS   = ["dashboard","nilai-stok","stok-varian","buat-paket","daftar-paket","menu-order","inbound","riwayat"];
+const FINISHING_IDS = ["buat-paket","daftar-paket","inbound","riwayat"];
+
+const getMenuItems=(role)=>{
+  if(role==="owner")return ALL_MENU;
+  const ids=role==="finishing"?FINISHING_IDS:ADMIN_IDS;
+  return ALL_MENU.filter(m=>ids.includes(m.id)).map(m=>{
+    if(m.id==="buat-paket"&&role==="finishing")return{...m,icon:"✂️",label:"Lanjutkan Paket"};
+    return m;
+  });
+};
+
+// ─── APP ──────────────────────────────────────────────────
+function App(){
+  const [role,setRole]=useState(null);const [page,setPage]=useState("dashboard");
+  const [jenis,setJenis]=useState([]);const [stokVarian,setStokVarian]=useState([]);
+  const [pkgs,setPkgs]=useState([]);const [trxs,setTrxs]=useState([]);
+  const [sidebar,setSidebar]=useState(true);const [notif,setNotif]=useState(null);
+  const [viewPaket,setViewPaket]=useState(null);const [loading,setLoading]=useState(false);const [loadErr,setLoadErr]=useState(null);
+  const isMobile=useMobile();const rtChannel=useRef(null);
+
+  const showNotif=useCallback((m,t="ok")=>{setNotif({m,t});setTimeout(()=>setNotif(null),3500);},[]);
+  const addTrx=useCallback((type,detail)=>setTrxs(p=>[{id:genId(),type,detail,tanggal:jakartaTime()},...p]),[]);
+
+  const loadAll=useCallback(async()=>{
+    setLoading(true);setLoadErr(null);
+    try{const d=await dbLoad();const s=toState(d);setJenis(s.jenis);setStokVarian(s.stokVarian);setPkgs(s.pkgs);setTrxs(s.trxs);}
+    catch(e){setLoadErr(e.message);}
+    setLoading(false);
+  },[]);
+
+  // Supabase Realtime — replaces polling
+  const setupRealtime=useCallback(()=>{
+    if(rtChannel.current)sb.removeChannel(rtChannel.current);
+    let timer=null;
+    const debounce=()=>{if(timer)clearTimeout(timer);timer=setTimeout(()=>loadAll(),1000);};
+    const ch=sb.channel('tarda-live')
+      .on('postgres_changes',{event:'*',schema:'public',table:'stok_varian'},debounce)
+      .on('postgres_changes',{event:'*',schema:'public',table:'pakets'},debounce)
+      .on('postgres_changes',{event:'*',schema:'public',table:'paket_items'},debounce)
+      .on('postgres_changes',{event:'*',schema:'public',table:'transaksi'},debounce)
+      .subscribe();
+    rtChannel.current=ch;
+  },[loadAll]);
+
+  useEffect(()=>{const sr=sessionStorage.getItem('tarda_role');if(sr)setRole(sr);},[]);
+  useEffect(()=>{if(role){loadAll().then(()=>setupRealtime());return()=>{if(rtChannel.current)sb.removeChannel(rtChannel.current);};}}, [role]);
+  useEffect(()=>{if(isMobile)setSidebar(false);},[isMobile]);
+
+  const doLogout=()=>{sessionStorage.removeItem('tarda_role');setRole(null);setJenis([]);setStokVarian([]);setPkgs([]);setTrxs([]);if(rtChannel.current)sb.removeChannel(rtChannel.current);};
+  const navTo=(id)=>{setPage(id);if(isMobile)setSidebar(false);};
+
+  if(!role)return <LoginPage onLogin={r=>{setRole(r);setPage(r==="finishing"?"buat-paket":"dashboard");}}/>;
+  if(loading)return <LoadingScreen/>;
+  if(loadErr)return <LoadingScreen error={loadErr} onRetry={loadAll}/>;
+
+  const menuItems=getMenuItems(role);
+  const cur=menuItems.find(m=>m.id===page)||menuItems[0];
+
+  const renderPage=()=>{switch(page){
+    case "dashboard":    return <Dashboard jenis={jenis} stokVarian={stokVarian} pkgs={pkgs} onView={setViewPaket}/>;
+    case "nilai-stok":   return <NilaiStok jenis={jenis} stokVarian={stokVarian}/>;
+    case "master-harga": return <MasterHarga jenis={jenis} setJenis={setJenis} showNotif={showNotif} role={role}/>;
+    case "stok-varian":  return <StokVarian jenis={jenis} stokVarian={stokVarian} setStokVarian={setStokVarian} showNotif={showNotif} addTrx={addTrx} role={role}/>;
+    case "buat-paket":   return <BuatPaket jenis={jenis} stokVarian={stokVarian} pkgs={pkgs} setPkgs={setPkgs} showNotif={showNotif} role={role}/>;
+    case "daftar-paket": return <DaftarPaket pkgs={pkgs} setPkgs={setPkgs} onView={setViewPaket} showNotif={showNotif} role={role}/>;
+    case "menu-order":   return <MenuOrder pkgs={pkgs} setPkgs={setPkgs} stokVarian={stokVarian} setStokVarian={setStokVarian} addTrx={addTrx} showNotif={showNotif} role={role}/>;
+    case "inbound":      return <InboundOutbound jenis={jenis} stokVarian={stokVarian} setStokVarian={setStokVarian} addTrx={addTrx} showNotif={showNotif} role={role}/>;
+    case "riwayat":      return <Riwayat trxs={trxs}/>;
+    case "rekap":        return <RekapBulanan trxs={trxs} showNotif={showNotif}/>;
+    case "arsip":        return <ArsipVarian/>;
+    default: return null;
+  }};
+
+  const sidebarW=isMobile?260:(sidebar?232:60);
+  const roleLabel=role==="owner"?"👑 Owner":role==="finishing"?"✂️ Finishing":"🏪 Admin Gudang";
+
+  return(<div style={{display:"flex",height:"100vh",background:C.bg,overflow:"hidden"}}>
+    {isMobile&&sidebar&&<div onClick={()=>setSidebar(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:9}}/>}
+    <div style={{width:sidebarW,position:isMobile?"fixed":"relative",height:"100vh",transition:isMobile?"none":"width .25s ease",background:`linear-gradient(180deg,${C.pri} 0%,${C.sec} 100%)`,display:isMobile&&!sidebar?"none":"flex",flexDirection:"column",flexShrink:0,boxShadow:"2px 0 12px rgba(0,0,0,.15)",zIndex:10,overflow:"hidden",animation:isMobile&&sidebar?"slideIn .2s ease":undefined}}>
+      <div style={{padding:"14px 12px",display:"flex",alignItems:"center",borderBottom:"1px solid rgba(255,255,255,.1)",minHeight:58,gap:8}}>
+        {(sidebar||isMobile)&&<div style={{overflow:"hidden",flex:1}}><div style={{fontWeight:700,fontSize:14,color:"#fff",whiteSpace:"nowrap"}}>Tarda Tailor</div><div style={{fontSize:11,color:"rgba(255,255,255,.55)",whiteSpace:"nowrap"}}>Inventory System</div></div>}
+        {isMobile?<button onClick={()=>setSidebar(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",fontSize:22,padding:4}}>×</button>:<button onClick={()=>setSidebar(!sidebar)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",fontSize:20,padding:4,flexShrink:0,marginLeft:sidebar?"0":"auto"}}>☰</button>}
+      </div>
+      <div style={{flex:1,overflowY:"auto",overflowX:"hidden"}}>{menuItems.map(m=><button key={m.id} onClick={()=>navTo(m.id)} title={m.label} style={{display:"flex",alignItems:"center",gap:12,padding:"13px 16px",width:"100%",background:page===m.id?"rgba(255,255,255,.15)":"transparent",border:"none",borderLeft:`3px solid ${page===m.id?"#64b5f6":"transparent"}`,color:"#fff",cursor:"pointer",textAlign:"left",fontSize:14,whiteSpace:"nowrap",transition:"background .15s"}}><span style={{fontSize:18,flexShrink:0}}>{m.icon}</span><span style={{overflow:"hidden",textOverflow:"ellipsis"}}>{m.label}</span></button>)}</div>
+      <div style={{padding:"12px 16px",borderTop:"1px solid rgba(255,255,255,.1)"}}><div style={{fontSize:11,color:"rgba(255,255,255,.5)",marginBottom:6}}>{roleLabel}</div><button onClick={doLogout} style={{fontSize:12,color:"rgba(255,255,255,.6)",background:"none",border:"1px solid rgba(255,255,255,.2)",borderRadius:6,padding:"5px 10px",cursor:"pointer",width:"100%"}}>🚪 Logout</button></div>
+    </div>
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
+      <div style={{background:"#fff",padding:"0 16px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:"0 1px 4px rgba(0,0,0,.08)",flexShrink:0,gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          {isMobile&&<button onClick={()=>setSidebar(true)} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,color:C.pri,padding:4}}>☰</button>}
+          <div style={{fontWeight:700,fontSize:isMobile?15:17,color:C.pri,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{cur?.icon} {cur?.label}</div>
+        </div>
+        <Badge label={roleLabel} color={role==="owner"?C.warn:role==="finishing"?C.dis:C.acc}/>
+      </div>
+      <div style={{flex:1,overflow:"auto",padding:isMobile?12:20}}>{renderPage()}</div>
+    </div>
+    <Notif n={notif}/>
+    {viewPaket&&<PaketDetail pkg={viewPaket} onClose={()=>setViewPaket(null)}/>}
+  </div>);
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
