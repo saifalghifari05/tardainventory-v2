@@ -971,18 +971,18 @@ function App(){
   const showNotif=useCallback((m,t="ok")=>{setNotif({m,t});setTimeout(()=>setNotif(null),3500);},[]);
   const addTrx=useCallback((type,detail)=>setTrxs(p=>[{id:genId(),type,detail,tanggal:jakartaTime()},...p]),[]);
 
-  const loadAll=useCallback(async()=>{
-    setLoading(true);setLoadErr(null);
+  const loadAll=useCallback(async(silent=false)=>{
+    if(!silent){setLoading(true);setLoadErr(null);}
     try{const d=await dbLoad();const s=toState(d);setJenis(s.jenis);setStokVarian(s.stokVarian);setPkgs(s.pkgs);setTrxs(s.trxs);}
-    catch(e){setLoadErr(e.message);}
-    setLoading(false);
+    catch(e){if(!silent)setLoadErr(e.message);}
+    if(!silent)setLoading(false);
   },[]);
 
   // Supabase Realtime — replaces polling
   const setupRealtime=useCallback(()=>{
     if(rtChannel.current)sb.removeChannel(rtChannel.current);
     let timer=null;
-    const debounce=()=>{if(timer)clearTimeout(timer);timer=setTimeout(()=>loadAll(),1000);};
+    const debounce=()=>{if(timer)clearTimeout(timer);timer=setTimeout(()=>loadAll(true),1000);};
     const ch=sb.channel('tarda-live')
       .on('postgres_changes',{event:'*',schema:'public',table:'stok_varian'},debounce)
       .on('postgres_changes',{event:'*',schema:'public',table:'pakets'},debounce)
