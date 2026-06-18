@@ -72,7 +72,7 @@ const toState = d => {
     jenis,
     stokVarian:(d.stok_varian||[]).map(k=>({...k,jenisId:k.jenis_id||"",jenisNama:k.jenis_nama||"",kodePrefix:k.kode_prefix||"",qty:toNum(k.qty)||toNum(k.sisa),sisa:toNum(k.sisa),kategori:k.kategori||"Kain"})),
     pkgs:(d.pakets||[]).map(p=>({...p,hpp:toNum(p.hpp),items:filteredItems.filter(i=>String(i.paket_id)===String(p.id))})),
-    trxs:[...(d.transaksi||[])].reverse()
+    trxs:[...(d.transaksi||[])]
   };
 };
 
@@ -550,7 +550,7 @@ function BuatPaket({jenis,stokVarian,pkgs,setPkgs,showNotif,role}){
   const [selected,setSelected]=useState({});const [saving,setSaving]=useState(false);
   const [appendSearch,setAppendSearch]=useState("");const [appendTarget,setAppendTarget]=useState(null);
   const [appendItemSearch,setAppendItemSearch]=useState("");const [appendCatFilter,setAppendCatFilter]=useState("Semua");
-  const [appendSelected,setAppendSelected]=useState({});const [appendSaving,setAppendSaving]=useState(false);
+  const [appendSelected,setAppendSelected]=useState({});const [appendSaving,setAppendSaving]=useState(false);const [confirmModal,setConfirmModal]=useState(false);
 
   const allPickable=useMemo(()=>aktif.map(k=>{const jk=jenis.find(j=>j.id===k.jenisId);return{id:k.id,type:"varian",nama:`${k.jenisNama} ${k.kode}`,satuan:jk?.satuan||"pcs",kategori:k.kategori||"Kain",stok:k.sisa,harga:jk?.harga||0,customer:k.customer||""};}), [aktif,jenis]);
   const cats=useMemo(()=>["Semua",...new Set(allPickable.map(i=>i.kategori))],[allPickable]);
@@ -584,6 +584,9 @@ function BuatPaket({jenis,stokVarian,pkgs,setPkgs,showNotif,role}){
     setSaving(false);
   };
 
+  const [confirmProses,setConfirmProses]=useState(null); // {paketId, kode, nama, newHpp, newItems}
+  const [prosesLoading,setProsesLoading]=useState(false);
+
   const appendSave=async()=>{
     if(!appendTarget)return showNotif("Pilih paket dulu!","err");
     if(appendSelItems.length===0)return showNotif("Pilih minimal 1 item!","err");
@@ -593,10 +596,27 @@ function BuatPaket({jenis,stokVarian,pkgs,setPkgs,showNotif,role}){
       const newItems=appendSelItems.map(i=>({id:genId(),paket_id:appendTarget.id,type:i.type,ref_id:i.id,nama:i.nama,qty:parseFloat(appendSelected[i.id])||0,satuan:i.satuan,harga:i.harga,kategori:i.kategori||""}));
       const newHpp=await dbAppendPaketItems(appendTarget.id,newItems);
       setPkgs(p=>p.map(x=>x.id!==appendTarget.id?x:{...x,hpp:newHpp,status:"disiapkan",items:[...x.items,...newItems]}));
-      showNotif(`✅ ${appendSelItems.length} item ditambahkan ke ${appendTarget.kode}! HPP: ${fmtRp(newHpp)}`);
+      // Tampilkan modal konfirmasi proses
+      setConfirmProses({paketId:appendTarget.id,kode:appendTarget.kode,nama:appendTarget.nama,customer:appendTarget.customer,newHpp,newItems,existingItems:appendTarget.items});
       setAppendTarget(null);setAppendSelected({});setAppendItemSearch("");
     }catch(e){showNotif("Gagal: "+e.message,"err");}
     setAppendSaving(false);
+  };
+
+  const doProses=async()=>{
+    if(!confirmProses)return;
+    setProsesLoading(true);
+    try{
+      const res=await dbProcessOrder(confirmProses.paketId,{skipFinishing:true});
+      if(!res.success){showNotif("❌ "+res.error,"err");setProsesLoading(false);return;}
+      const failed=(res.log||[]).filter(l=>l.includes("NOT FOUND"));
+      if(failed.length>0){showNotif("⚠️ "+failed.length+" stok tidak ditemukan!","err");setProsesLoading(false);return;}
+      setPkgs(p=>p.map(x=>x.id===confirmProses.paketId?{...x,status:"selesai"}:x));
+      if(res.processedItems)setStokVarian(p=>p.map(k=>{const pi=res.processedItems.find(x=>x.ref_id===k.id);return pi?{...k,sisa:pi.newSisa,status:pi.status}:k;}));
+      showNotif(`✅ Paket ${confirmProses.kode} selesai diproses!`);
+      setConfirmProses(null);
+    }catch(e){showNotif("Gagal: "+e.message,"err");}
+    setProsesLoading(false);
   };
 
   return(<div style={{maxWidth:720,margin:"0 auto",width:"100%"}}>
@@ -690,6 +710,31 @@ function BuatPaket({jenis,stokVarian,pkgs,setPkgs,showNotif,role}){
         <Btn onClick={save} loading={saving} style={{width:"100%",padding:"13px",fontSize:15}}>💾 Simpan Paket</Btn>
       </Card>}
     </>}
+
+    {/* ─── Modal Konfirmasi Proses (finishing) ─── */}
+    {confirmProses&&<Modal title="⚡ Konfirmasi Proses Paket" onClose={()=>setConfirmProses(null)} w={500}>
+      <div style={{background:"#fff8e1",borderRadius:8,padding:"12px 14px",marginBottom:14,fontSize:13,color:"#e65100",fontWeight:600}}>
+        ⚠️ Setelah dikonfirmasi, stok akan langsung terpotong dan tidak bisa dibatalkan.
+      </div>
+      <div style={{background:"#f0f4ff",borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+        <div style={{fontFamily:"monospace",color:C.pri,fontWeight:700,fontSize:13}}>{confirmProses.kode}</div>
+        <div style={{fontWeight:600,marginTop:2}}>{confirmProses.nama}{confirmProses.customer&&<span style={{color:"#888",fontWeight:400}}> — {confirmProses.customer}</span>}</div>
+        <div style={{color:C.ok,fontWeight:700,marginTop:4}}>Total HPP: {fmtRp(confirmProses.newHpp)}</div>
+      </div>
+      <div style={{fontWeight:700,fontSize:13,marginBottom:8,color:C.pri}}>Material yang akan dipotong:</div>
+      <div style={{maxHeight:200,overflowY:"auto",border:"1px solid #eee",borderRadius:8,marginBottom:14}}>
+        {[...(confirmProses.existingItems||[]),...confirmProses.newItems].map((it,i)=>(
+          <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"9px 14px",borderBottom:"1px solid #f5f5f5",fontSize:13}}>
+            <span>{it.nama}</span>
+            <span style={{fontWeight:600}}>{it.qty} {it.satuan}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+        <Ghost onClick={()=>setConfirmProses(null)}>Batal</Ghost>
+        <Btn onClick={doProses} loading={prosesLoading} bg={C.ok} style={{fontSize:14,padding:"10px 20px"}}>✅ Ya, Proses Sekarang</Btn>
+      </div>
+    </Modal>}
   </div>);
 }
 
@@ -907,7 +952,7 @@ function RekapBulanan({trxs,showNotif}){
       {rekapData&&<SC icon="💰" label="Total HPP" value={fmtRp(rekapData.total_hpp||0)} color={C.ok}/>}
     </div>
     {rekapData&&<Card style={{marginBottom:14}}><div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:12}}>📦 Breakdown Material Terpakai</div><Tbl><TH cols={["Kategori","Jumlah","Satuan"]}/><tbody>{BD_COLS.filter(c=>(rekapData[c.key]||0)>0).map(c=><tr key={c.key}><TD><b>{c.label}</b></TD><TD style={{fontWeight:700,color:C.ok}}>{rekapData[c.key]}</TD><TD>{c.sat}</TD></tr>)}{BD_COLS.every(c=>!rekapData[c.key])&&<tr><td colSpan={3} style={{textAlign:"center",padding:20,color:"#ccc"}}>Belum ada data — pastikan kolom kategori terisi di paket_items</td></tr>}</tbody></Tbl></Card>}
-    <Card><div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:12}}>Detail Transaksi</div>{filtered.length===0?<div style={{textAlign:"center",padding:40,color:"#ccc"}}>Tidak ada transaksi bulan ini</div>:<Tbl><TH cols={["Tipe","Keterangan","Tanggal"]}/><tbody>{filtered.map(t=><tr key={t.id}><TD><Badge label={t.type} color={t.type==="inbound"?C.ok:C.warn}/></TD><TD style={{whiteSpace:"pre-line",fontSize:13}}>{t.detail}</TD><TD style={{fontSize:12,whiteSpace:"nowrap"}}>{String(t.tanggal).slice(0,16)}</TD></tr>)}</tbody></Tbl>}</Card>
+    <Card><div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:12}}>Detail Transaksi</div>{filtered.length===0?<div style={{textAlign:"center",padding:40,color:"#ccc"}}>Tidak ada transaksi bulan ini</div>:<div style={{maxHeight:400,overflowY:"auto"}}><Tbl><TH cols={["Tipe","Keterangan","Tanggal"]}/><tbody>{filtered.map(t=><tr key={t.id}><TD><Badge label={t.type} color={t.type==="inbound"?C.ok:C.warn}/></TD><TD style={{whiteSpace:"pre-line",fontSize:13}}>{t.detail}</TD><TD style={{fontSize:12,whiteSpace:"nowrap"}}>{String(t.tanggal).slice(0,16)}</TD></tr>)}</tbody></Tbl></div>}</Card>
   </div>);
 }
 
