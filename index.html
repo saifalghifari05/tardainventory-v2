@@ -82,12 +82,17 @@ const toState = d => {
 
 // ─── DB OPERATIONS (replaces GAS) ────────────────────────
 const dbLoad = async () => {
-  const [r1,r2,r3,r4,r5,r6] = await Promise.all([
+  const [r1,r2,r3,r4] = await Promise.all([
     sb.from('jenis_kain').select('*'),
     sb.from('materials').select('*'),
     sb.from('stok_varian').select('*').neq('status','arsip'),
     sb.from('pakets').select('*').order('tanggal',{ascending:false}).limit(200),
-    sb.from('paket_items').select('*'),
+  ]);
+  const paketIds = (r4.data||[]).map(p=>p.id);
+  const [r5,r6] = await Promise.all([
+    paketIds.length>0
+      ? sb.from('paket_items').select('*').in('paket_id',paketIds)
+      : Promise.resolve({data:[]}),
     sb.from('transaksi').select('*').order('tanggal',{ascending:false}).limit(200),
   ]);
   return {jenis_kain:r1.data||[],materials:r2.data||[],stok_varian:r3.data||[],pakets:r4.data||[],paket_items:r5.data||[],transaksi:r6.data||[]};
@@ -182,7 +187,7 @@ const Badge=({label,color="#999"})=><span style={{background:color+"22",color,pa
 const TH=({cols})=><thead><tr>{cols.map(c=><th key={c} style={{background:"#f5f7fa",padding:"10px 12px",textAlign:"left",fontSize:12,fontWeight:700,color:"#555",borderBottom:"2px solid #e8eaf0",whiteSpace:"nowrap"}}>{c}</th>)}</tr></thead>;
 const TD=({children,style})=><td style={{padding:"10px 12px",borderBottom:"1px solid #f0f2f5",fontSize:13,...style}}>{children}</td>;
 const Tbl=({children})=><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse"}}>{children}</table></div>;
-const SC=({icon,label,value,color,sub})=><Card style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}><div style={{width:36,height:36,borderRadius:9,background:color+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div><div style={{minWidth:0,flex:1}}><div style={{fontSize:11,color:"#aaa",marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{label}</div><div style={{fontSize:12,fontWeight:700,color,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:1.3}}>{value}</div>{sub&&<div style={{fontSize:10,color:"#bbb",marginTop:1}}>{sub}</div>}</div></Card>;
+const SC=({icon,label,value,color,sub})=><Card style={{display:"flex",alignItems:"center",gap:12,minWidth:0}}><div style={{width:40,height:40,borderRadius:10,background:color+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{icon}</div><div style={{minWidth:0,flex:1}}><div style={{fontSize:11,color:"#aaa",marginBottom:2}}>{label}</div><div style={{fontSize:13,fontWeight:700,color,wordBreak:"break-word",lineHeight:1.3}}>{value}</div>{sub&&<div style={{fontSize:10,color:"#bbb",marginTop:1}}>{sub}</div>}</div></Card>;
 
 // Smart pagination — prev/next + ellipsis
 function Pg({page,total,onChange}){
@@ -338,7 +343,7 @@ function NilaiStok({jenis,stokVarian}){
   const total=filtered.reduce((s,i)=>s+i.nilai,0);
   const catTotals=useMemo(()=>{const c={};allItems.forEach(i=>{c[i.kategori]=(c[i.kategori]||0)+i.nilai;});return c;},[allItems]);
   return(<div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",maxWidth:"calc(5 * 220px)",gap:10,marginBottom:14}}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginBottom:14}}>
       <SC icon="💰" label="Total Nilai Stok" value={fmtRp(allItems.reduce((s,i)=>s+i.nilai,0))} color={C.ok}/>
       {Object.entries(catTotals).map(([k,v])=><SC key={k} icon={CAT_ICON[k]||"📦"} label={k} value={fmtRp(v)} color={CAT_COLOR[k]||C.acc}/>)}
     </div>
@@ -744,6 +749,11 @@ function MenuOrder({pkgs,setPkgs,stokVarian,setStokVarian,addTrx,showNotif,role}
   const [saving,setSaving]=useState(false);const [debugInfo,setDebugInfo]=useState(null);
   const [forceModal,setForceModal]=useState(false);const [forceSelected,setForceSelected]=useState({});const [forceLoading,setForceLoading]=useState(false);
 
+  // Sync found saat pkgs berubah via Realtime
+  useEffect(()=>{
+    if(found){const updated=pkgs.find(x=>x.id===found.id);if(updated)setFound(updated);}
+  },[pkgs]);
+
   const doSearch=()=>{const p=pkgs.find(x=>x.kode===input.trim());if(p){setFound(p);setNotFound(false);setDebugInfo(null);}else{setFound(null);setNotFound(true);}};
 
   const runProcess=async({skipFinishing=false,selectedItems=[]}={})=>{
@@ -819,8 +829,12 @@ function InboundOutbound({jenis,stokVarian,setStokVarian,addTrx,showNotif,role})
   const varianForKat=useMemo(()=>aktif.filter(k=>(k.kategori||"Kain")===vf.katFilter),[aktif,vf.katFilter]);
   const selVarian=stokVarian.find(k=>k.id===vf.varianId);const selJK=selVarian?jenis.find(j=>j.id===selVarian.jenisId):null;
 
-  // For finishing: inbound tab uses FINISHING_CATS filter  
-  if(!katsForRole.includes(vf.katFilter)&&katsForRole.length>0) setVF(x=>({...x,katFilter:katsForRole[0],varianId:""}));
+  // Fix: gunakan useEffect agar tidak setState saat render
+  useEffect(()=>{
+    if(!katsForRole.includes(vf.katFilter)&&katsForRole.length>0){
+      setVF(x=>({...x,katFilter:katsForRole[0],varianId:""}));
+    }
+  },[role]);
 
   const save=async()=>{
     if(!vf.varianId||!vf.qty||parseFloat(vf.qty)<=0)return showNotif("Lengkapi semua field!","err");
