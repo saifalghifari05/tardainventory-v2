@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "index.html", "use": "@vercel/static" },
+    { "src": "favicon.png", "use": "@vercel/static" },
+    { "src": "migrate.html", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/favicon.png", "dest": "/favicon.png" },
+    { "src": "/migrate", "dest": "/migrate.html" },
+    { "src": "/(.*)", "dest": "/index.html" }
+  ]
+}
