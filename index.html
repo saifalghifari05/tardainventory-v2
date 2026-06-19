@@ -40,7 +40,7 @@ const { createClient } = window.supabase;
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ─── CONSTANTS ────────────────────────────────────────────
-const PWS = {owner:'052731', admin:'1234', finishing:'5678'};
+const PWS = {owner:'052731', admin:'1234', finishing:'5678', rnd:'9999'};
 const ALL_KAT = ["Kain","Benang","Resletting","Interlining","Kancing","Pin","Kabak","Tarboosh","Plastik Zipper","Hardbox","Mika","Kardus"];
 const NON_KAIN_KAT = ALL_KAT.filter(k=>k!=="Kain");
 const FINISHING_CATS = ["Kancing","Hardbox","Pin","Tarboosh","Mika","Kardus","Kabak","Plastik Zipper"];
@@ -269,7 +269,7 @@ function LoadingScreen({error,onRetry}){return(
 
 function LoginPage({onLogin}){
   const [sel,setSel]=useState(null);const [pw,setPw]=useState("");const [err,setErr]=useState("");
-  const ROLES=[{id:"owner",l:"Super Admin"},{id:"admin",l:"Admin Gudang"},{id:"finishing",l:"Finisher"}];
+  const ROLES=[{id:"owner",l:"Super Admin"},{id:"admin",l:"Admin Gudang"},{id:"finishing",l:"Finisher"},{id:"rnd",l:"PIC RnD"}];
   const login=()=>{if(!sel)return setErr("Pilih role dulu!");if(pw!==PWS[sel])return setErr("Password salah!");sessionStorage.setItem('tarda_role',sel);onLogin(sel);};
   return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#f5f5f0"}}>
     <div style={{background:"#fff",borderRadius:20,padding:"40px 36px",width:400,maxWidth:"calc(100vw - 32px)",boxShadow:"0 8px 40px rgba(0,0,0,.1)"}}>
@@ -1180,16 +1180,20 @@ function RekapBulanan({trxs,showNotif,pkgs}){
   </div>);
 }
 // ─── KALKULATOR HPP ──────────────────────────────────────
-function KalkulatorHPP({jenis,stokVarian}){
+function KalkulatorHPP({jenis,stokVarian,role}){
   const [customer,setCustomer]=useState("");
   const [picName,setPicName]=useState("");
   const [catFilter,setCatFilter]=useState("Semua");
   const [search,setSearch]=useState("");
   const [items,setItems]=useState([]);
+  const [manualItems,setManualItems]=useState([{id:genId(),nama:"",harga:"",qty:"1"}]);
   const [exporting,setExporting]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [riwayat,setRiwayat]=useState([]);
+  const [showRiwayat,setShowRiwayat]=useState(false);
+  const [loadingRiwayat,setLoadingRiwayat]=useState(false);
 
   const aktif=stokVarian.filter(k=>k.status==="aktif");
-
   const allPickable=useMemo(()=>{
     const seen=new Set();
     return aktif.reduce((acc,k)=>{
@@ -1203,7 +1207,6 @@ function KalkulatorHPP({jenis,stokVarian}){
   },[aktif,jenis]);
 
   const cats=useMemo(()=>["Semua",...new Set(allPickable.map(i=>i.kategori))],[allPickable]);
-
   const filtered=useMemo(()=>{
     let l=allPickable;
     if(catFilter!=="Semua")l=l.filter(i=>i.kategori===catFilter);
@@ -1211,158 +1214,203 @@ function KalkulatorHPP({jenis,stokVarian}){
     return l;
   },[allPickable,catFilter,search]);
 
-  const hpp=useMemo(()=>items.reduce((s,it)=>s+(parseFloat(it.qty)||0)*it.harga,0),[items]);
+  // HPP dari database items
+  const hppDb=useMemo(()=>items.reduce((s,it)=>s+(parseFloat(it.qty)||0)*it.harga,0),[items]);
+  // HPP dari manual items
+  const hppManual=useMemo(()=>manualItems.reduce((s,it)=>s+(parseFloat(it.qty)||0)*(parseFloat(it.harga)||0),0),[manualItems]);
+  const hpp=hppDb+hppManual;
 
   const addItem=useCallback(item=>{
     if(items.find(it=>it.id===item.id))return;
     setItems(p=>[...p,{...item,qty:"1",lineId:genId()}]);
   },[items]);
-
   const updateQty=(lineId,val)=>setItems(p=>p.map(it=>it.lineId===lineId?{...it,qty:val}:it));
   const removeItem=lineId=>setItems(p=>p.filter(it=>it.lineId!==lineId));
-  const reset=()=>{setItems([]);setCustomer("");setPicName("");};
 
-  const exportPDF=async()=>{
+  // Manual item handlers
+  const addManualRow=()=>setManualItems(p=>[...p,{id:genId(),nama:"",harga:"",qty:"1"}]);
+  const updateManual=(id,field,val)=>setManualItems(p=>p.map(it=>it.id===id?{...it,[field]:val}:it));
+  const removeManual=id=>setManualItems(p=>p.length>1?p.filter(it=>it.id!==id):p);
+
+  const reset=()=>{setItems([]);setManualItems([{id:genId(),nama:"",harga:"",qty:"1"}]);setCustomer("");setPicName("");};
+
+  // Load riwayat
+  const loadRiwayat=async()=>{
+    setLoadingRiwayat(true);
+    try{const {data}=await sb.from('kalkulator_hpp').select('*').order('created_at',{ascending:false}).limit(50);setRiwayat(data||[]);}
+    catch(e){console.error(e);}
+    setLoadingRiwayat(false);
+  };
+
+  const allItems=useMemo(()=>[
+    ...items.map(it=>({nama:it.nama,kategori:it.kategori,satuan:it.satuan,qty:parseFloat(it.qty)||0,harga:it.harga,subtotal:Math.round((parseFloat(it.qty)||0)*it.harga),tipe:"db"})),
+    ...manualItems.filter(it=>it.nama.trim()&&parseFloat(it.harga)>0).map(it=>({nama:it.nama,kategori:"Manual",satuan:"pcs",qty:parseFloat(it.qty)||0,harga:parseFloat(it.harga)||0,subtotal:Math.round((parseFloat(it.qty)||0)*(parseFloat(it.harga)||0)),tipe:"manual"}))
+  ],[items,manualItems]);
+
+  const simpanDanExport=async(onlyPDF=false)=>{
     if(!customer.trim()){alert("Isi nama customer dulu!");return;}
-    if(items.length===0){alert("Tambahkan item dulu!");return;}
+    if(allItems.length===0){alert("Tambahkan item dulu!");return;}
     setExporting(true);
     try{
+      // Simpan ke Supabase
+      if(!onlyPDF){
+        const rec={id:genId(),customer:customer.trim(),penjahit:picName.trim()||null,total_hpp:Math.round(hpp),items:allItems,created_at:nowISO(),created_by:role};
+        await sb.from('kalkulator_hpp').insert(rec);
+      }
+      // Generate PDF
       const {jsPDF}=window.jspdf;
       const doc=new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
       const W=210;const M=20;
-
-      // Header bar
-      doc.setFillColor(30,41,59);
-      doc.rect(0,0,W,36,"F");
-      doc.setTextColor(255,255,255);
-      doc.setFontSize(18);doc.setFont("helvetica","bold");
+      doc.setFillColor(30,41,59);doc.rect(0,0,W,36,"F");
+      doc.setTextColor(255,255,255);doc.setFontSize(18);doc.setFont("helvetica","bold");
       doc.text("TARDA TAILOR",M,14);
       doc.setFontSize(10);doc.setFont("helvetica","normal");
       doc.text("Kalkulator HPP — Estimasi Biaya Penggantian",M,22);
-      doc.setFontSize(8);
-      doc.text("Dicetak: "+jakartaTime(),M,30);
-
-      // Info customer
+      doc.setFontSize(8);doc.text("Dicetak: "+jakartaTime(),M,30);
       doc.setTextColor(30,41,59);
       let y=46;
-      doc.setFontSize(10);doc.setFont("helvetica","bold");
-      doc.text("Customer:",M,y);
-      doc.setFont("helvetica","normal");
-      doc.text(customer,M+28,y);
-      if(picName.trim()){
-        y+=7;
-        doc.setFont("helvetica","bold");
-        doc.text("Penanggung Jawab:",M,y);
-        doc.setFont("helvetica","normal");
-        doc.text(picName,M+46,y);
-      }
+      doc.setFontSize(10);doc.setFont("helvetica","bold");doc.text("Customer:",M,y);
+      doc.setFont("helvetica","normal");doc.text(customer,M+28,y);
+      if(picName.trim()){y+=7;doc.setFont("helvetica","bold");doc.text("Penanggung Jawab:",M,y);doc.setFont("helvetica","normal");doc.text(picName,M+46,y);}
       y+=10;
-
-      // Tabel
-      const rows=items.map((it,i)=>[
-        String(i+1),
-        it.nama,
-        it.kategori,
-        String(parseFloat(it.qty)||0),
-        it.satuan,
-        "Rp "+fmt(it.harga),
-        "Rp "+fmt(Math.round((parseFloat(it.qty)||0)*it.harga))
-      ]);
-      doc.autoTable({
-        startY:y,
-        head:[["#","Material","Kategori","Qty","Satuan","Harga/Sat","Subtotal"]],
-        body:rows,
-        theme:"grid",
-        headStyles:{fillColor:[30,41,59],textColor:255,fontStyle:"bold",fontSize:9},
-        bodyStyles:{fontSize:9,textColor:[50,50,50]},
-        columnStyles:{0:{cellWidth:8,halign:"center"},1:{cellWidth:50},2:{cellWidth:25},3:{cellWidth:12,halign:"right"},4:{cellWidth:16},5:{cellWidth:28,halign:"right"},6:{cellWidth:28,halign:"right"}},
-        margin:{left:M,right:M},
-        alternateRowStyles:{fillColor:[248,250,252]},
-      });
-
-      // Total HPP box
+      const rows=allItems.map((it,i)=>[String(i+1),it.nama,it.kategori,String(it.qty),it.satuan,"Rp "+fmt(it.harga),"Rp "+fmt(it.subtotal)]);
+      doc.autoTable({startY:y,head:[["#","Material","Kategori","Qty","Satuan","Harga/Sat","Subtotal"]],body:rows,theme:"grid",headStyles:{fillColor:[30,41,59],textColor:255,fontStyle:"bold",fontSize:9},bodyStyles:{fontSize:9,textColor:[50,50,50]},columnStyles:{0:{cellWidth:8,halign:"center"},1:{cellWidth:50},2:{cellWidth:25},3:{cellWidth:12,halign:"right"},4:{cellWidth:16},5:{cellWidth:28,halign:"right"},6:{cellWidth:28,halign:"right"}},margin:{left:M,right:M},alternateRowStyles:{fillColor:[248,250,252]}});
       const fy=doc.lastAutoTable.finalY+8;
-      doc.setFillColor(240,253,244);
-      doc.rect(M,fy-5,W-2*M,14,"F");
-      doc.setDrawColor(22,163,74);
-      doc.rect(M,fy-5,W-2*M,14,"S");
-      doc.setFontSize(12);doc.setFont("helvetica","bold");
-      doc.setTextColor(22,163,74);
+      doc.setFillColor(240,253,244);doc.rect(M,fy-5,W-2*M,14,"F");
+      doc.setDrawColor(22,163,74);doc.rect(M,fy-5,W-2*M,14,"S");
+      doc.setFontSize(12);doc.setFont("helvetica","bold");doc.setTextColor(22,163,74);
       doc.text("TOTAL HPP",M+4,fy+4);
       doc.text("Rp "+fmt(Math.round(hpp)),W-M-4,fy+4,{align:"right"});
-
-      // Catatan
-      doc.setFontSize(8);doc.setFont("helvetica","italic");
-      doc.setTextColor(150,150,150);
-      doc.text("* Estimasi biaya penggantian berdasarkan harga material saat ini. Harga dapat berubah.",M,fy+22);
-
+      doc.setFontSize(8);doc.setFont("helvetica","italic");doc.setTextColor(150,150,150);
+      doc.text("* Estimasi biaya penggantian berdasarkan harga material saat ini.",M,fy+22);
       const safeName=customer.replace(/[^a-zA-Z0-9]/g,"_");
       doc.save("HPP_"+safeName+"_"+new Date().toISOString().slice(0,10)+".pdf");
-    }catch(e){alert("Gagal export PDF: "+e.message);}
+      if(!onlyPDF)alert("Tersimpan dan PDF berhasil di-download!");
+    }catch(e){alert("Gagal: "+e.message);}
     setExporting(false);
   };
 
-  return(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,alignItems:"start"}}>
-    <div>
-      <Card style={{marginBottom:12}}>
-        <div style={{fontWeight:700,fontSize:14,color:C.pri,marginBottom:14}}>🧮 Kalkulator HPP</div>
-        <Inp label="Nama Customer *" value={customer} onChange={setCustomer} placeholder="Ibu Sari / Bapak Joko"/>
-        <Inp label="Penanggung Jawab (opsional)" value={picName} onChange={setPicName} placeholder="Nama karyawan yang bertanggung jawab"/>
-      </Card>
-      <Card>
-        <div style={{fontWeight:700,fontSize:13,color:C.pri,marginBottom:10}}>Pilih Material</div>
-        <input placeholder="Cari material..." value={search} onChange={e=>setSearch(e.target.value)} style={{border:"1px solid #ddd",borderRadius:8,padding:"8px 12px",fontSize:13,width:"100%",boxSizing:"border-box",marginBottom:8}}/>
-        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
-          {cats.map(c=><button key={c} onClick={()=>setCatFilter(c)} style={{padding:"4px 10px",borderRadius:6,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,background:catFilter===c?C.pri:"#f0f0f0",color:catFilter===c?"#fff":"#555"}}>{c}</button>)}
-        </div>
-        <div style={{maxHeight:340,overflowY:"auto",border:"1px solid #f0f0f0",borderRadius:8,paddingRight:4}}>
-          {filtered.length===0&&<div style={{padding:20,textAlign:"center",color:"#ccc",fontSize:13}}>Tidak ada material</div>}
-          {filtered.map(item=>{
-            const sudahAda=!!items.find(it=>it.id===item.id);
-            return(<div key={item.id} onClick={()=>!sudahAda&&addItem(item)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 12px",borderBottom:"1px solid #f8f8f8",cursor:sudahAda?"default":"pointer",background:sudahAda?"#f0faf0":"#fff"}}>
-              <div>
-                <div style={{fontWeight:600,fontSize:13}}>{item.nama}</div>
-                <div style={{fontSize:11,color:"#aaa"}}>{item.kategori} · {fmtRp(item.harga)}/{item.satuan}</div>
-              </div>
-              <div style={{color:sudahAda?C.ok:"#ddd",fontSize:20,fontWeight:700,marginLeft:8}}>{sudahAda?"✓":"+"}</div>
-            </div>);
-          })}
-        </div>
-      </Card>
+  return(<div>
+    {/* Toolbar */}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+      <div style={{fontWeight:700,fontSize:15,color:C.pri}}>🧮 Kalkulator HPP</div>
+      <div style={{display:"flex",gap:8}}>
+        <Ghost onClick={()=>{setShowRiwayat(!showRiwayat);if(!showRiwayat)loadRiwayat();}} style={{fontSize:12,padding:"7px 14px"}}>📋 Riwayat</Ghost>
+        {items.length>0||manualItems.some(i=>i.nama.trim())&&<Ghost onClick={reset} style={{fontSize:12,padding:"7px 14px",color:C.err}}>Reset</Ghost>}
+      </div>
     </div>
-    <div>
-      <Card style={{marginBottom:12}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div style={{fontWeight:700,fontSize:13,color:C.pri}}>Daftar Item ({items.length})</div>
-          {items.length>0&&<Ghost onClick={reset} style={{padding:"4px 10px",fontSize:12,color:C.err}}>Reset</Ghost>}
-        </div>
-        {items.length===0
-          ?<div style={{textAlign:"center",padding:"30px 0",color:"#ccc",fontSize:13}}>Pilih material dari kiri</div>
-          :<div style={{maxHeight:400,overflowY:"auto",paddingRight:4}}>
-            {items.map(it=>(
-              <div key={it.lineId} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 0",borderBottom:"1px solid #f5f5f5"}}>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontWeight:600,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.nama}</div>
-                  <div style={{fontSize:11,color:C.ok,marginTop:2}}>{fmtRp(it.harga)}/{it.satuan} x {parseFloat(it.qty)||0} = <b>{fmtRp(Math.round((parseFloat(it.qty)||0)*it.harga))}</b></div>
+
+    {/* Riwayat panel */}
+    {showRiwayat&&<Card style={{marginBottom:14}}>
+      <div style={{fontWeight:700,fontSize:13,color:C.pri,marginBottom:10}}>📋 Riwayat Kalkulasi</div>
+      {loadingRiwayat?<div style={{textAlign:"center",padding:20,color:"#aaa"}}>Memuat...</div>
+      :riwayat.length===0?<div style={{textAlign:"center",padding:20,color:"#ccc"}}>Belum ada riwayat</div>
+      :<div style={{maxHeight:280,overflowY:"auto"}}>
+        {riwayat.map(r=><div key={r.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:"1px solid #f5f5f5"}}>
+          <div>
+            <div style={{fontWeight:600,fontSize:13}}>{r.customer}</div>
+            <div style={{fontSize:11,color:"#aaa"}}>{r.penjahit&&"PJ: "+r.penjahit+" · "}{String(r.created_at).slice(0,10)} · {r.created_by}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontWeight:700,color:C.ok,fontSize:14}}>{fmtRp(r.total_hpp)}</div>
+            <div style={{fontSize:11,color:"#aaa"}}>{(r.items||[]).length} item</div>
+          </div>
+        </div>)}
+      </div>}
+    </Card>}
+
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,alignItems:"start"}}>
+      {/* Kiri */}
+      <div>
+        <Card style={{marginBottom:12}}>
+          <Inp label="Nama Customer *" value={customer} onChange={setCustomer} placeholder="Ibu Sari / Bapak Joko"/>
+          <Inp label="Penanggung Jawab (opsional)" value={picName} onChange={setPicName} placeholder="Nama yang bertanggung jawab"/>
+        </Card>
+
+        {/* Pilih dari database */}
+        <Card style={{marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:C.pri,marginBottom:10}}>Pilih dari Database</div>
+          <input placeholder="Cari material..." value={search} onChange={e=>setSearch(e.target.value)} style={{border:"1px solid #ddd",borderRadius:8,padding:"8px 12px",fontSize:13,width:"100%",boxSizing:"border-box",marginBottom:8}}/>
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
+            {cats.map(c=><button key={c} onClick={()=>setCatFilter(c)} style={{padding:"4px 10px",borderRadius:6,border:"none",cursor:"pointer",fontSize:11,fontWeight:600,background:catFilter===c?C.pri:"#f0f0f0",color:catFilter===c?"#fff":"#555"}}>{c}</button>)}
+          </div>
+          <div style={{maxHeight:280,overflowY:"auto",border:"1px solid #f0f0f0",borderRadius:8,paddingRight:4}}>
+            {filtered.map(item=>{
+              const sudahAda=!!items.find(it=>it.id===item.id);
+              return(<div key={item.id} onClick={()=>!sudahAda&&addItem(item)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",borderBottom:"1px solid #f8f8f8",cursor:sudahAda?"default":"pointer",background:sudahAda?"#f0faf0":"#fff"}}>
+                <div><div style={{fontWeight:600,fontSize:12}}>{item.nama}</div><div style={{fontSize:11,color:"#aaa"}}>{item.kategori} · {fmtRp(item.harga)}/{item.satuan}</div></div>
+                <div style={{color:sudahAda?C.ok:"#ddd",fontSize:18,fontWeight:700}}>{sudahAda?"✓":"+"}</div>
+              </div>);
+            })}
+          </div>
+        </Card>
+
+        {/* Input manual */}
+        <Card>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontWeight:700,fontSize:13,color:C.pri}}>Material Manual</div>
+            <button onClick={addManualRow} style={{background:C.acc,color:"#fff",border:"none",borderRadius:6,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700}}>+ Tambah Baris</button>
+          </div>
+          {manualItems.map((it,i)=>(
+            <div key={it.id} style={{display:"grid",gridTemplateColumns:"1fr 90px 60px 28px",gap:6,marginBottom:8,alignItems:"center"}}>
+              <input value={it.nama} onChange={e=>updateManual(it.id,"nama",e.target.value)} placeholder={`Material ${i+1}`} style={{border:"1px solid #ddd",borderRadius:6,padding:"7px 10px",fontSize:12,boxSizing:"border-box"}}/>
+              <input type="number" value={it.harga} onChange={e=>updateManual(it.id,"harga",e.target.value)} placeholder="Harga" min="0" style={{border:"1px solid #ddd",borderRadius:6,padding:"7px 8px",fontSize:12,boxSizing:"border-box"}}/>
+              <input type="number" value={it.qty} onChange={e=>updateManual(it.id,"qty",e.target.value)} placeholder="Qty" min="0.01" step="0.01" style={{border:"1px solid #ddd",borderRadius:6,padding:"7px 8px",fontSize:12,boxSizing:"border-box"}}/>
+              <button onClick={()=>removeManual(it.id)} style={{background:"none",border:"none",cursor:"pointer",color:manualItems.length>1?"#f87171":"#ddd",fontSize:16,padding:0,fontWeight:700}}>x</button>
+            </div>
+          ))}
+          <div style={{fontSize:11,color:"#aaa",marginTop:4}}>Nama · Harga/pcs · Qty</div>
+        </Card>
+      </div>
+
+      {/* Kanan */}
+      <div>
+        <Card style={{marginBottom:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:C.pri,marginBottom:12}}>Ringkasan ({allItems.length} item)</div>
+          {allItems.length===0
+            ?<div style={{textAlign:"center",padding:"24px 0",color:"#ccc",fontSize:13}}>Pilih atau tambah material</div>
+            :<div style={{maxHeight:360,overflowY:"auto",paddingRight:4}}>
+              {/* Database items */}
+              {items.length>0&&<div style={{fontSize:11,fontWeight:700,color:"#aaa",padding:"4px 0",marginBottom:4,textTransform:"uppercase",letterSpacing:.8}}>Dari Database</div>}
+              {items.map(it=>(
+                <div key={it.lineId} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:"1px solid #f5f5f5"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.nama}</div>
+                    <div style={{fontSize:11,color:C.ok}}>{fmtRp(it.harga)} x <input type="number" value={it.qty} onChange={e=>updateQty(it.lineId,e.target.value)} min="0.01" step="0.01" style={{width:50,border:"1px solid #ddd",borderRadius:4,padding:"2px 4px",fontSize:11,textAlign:"center"}}/> {it.satuan} = <b>{fmtRp(Math.round((parseFloat(it.qty)||0)*it.harga))}</b></div>
+                  </div>
+                  <button onClick={()=>removeItem(it.lineId)} style={{background:"none",border:"none",cursor:"pointer",color:"#ddd",fontSize:16,padding:0}} onMouseEnter={e=>e.target.style.color=C.err} onMouseLeave={e=>e.target.style.color="#ddd"}>x</button>
                 </div>
-                <input type="number" value={it.qty} onChange={e=>updateQty(it.lineId,e.target.value)} min="0.01" step="0.01" style={{width:64,border:"1px solid #ddd",borderRadius:6,padding:"6px 8px",fontSize:13,textAlign:"center",flexShrink:0}}/>
-                <span style={{fontSize:11,color:"#aaa",width:28,flexShrink:0}}>{it.satuan}</span>
-                <button onClick={()=>removeItem(it.lineId)} style={{background:"none",border:"none",cursor:"pointer",color:"#ddd",fontSize:18,flexShrink:0,padding:0}}>x</button>
+              ))}
+              {/* Manual items */}
+              {manualItems.some(it=>it.nama.trim()&&parseFloat(it.harga)>0)&&<div style={{fontSize:11,fontWeight:700,color:"#aaa",padding:"8px 0 4px",textTransform:"uppercase",letterSpacing:.8}}>Manual</div>}
+              {manualItems.filter(it=>it.nama.trim()&&parseFloat(it.harga)>0).map(it=>(
+                <div key={it.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #f5f5f5"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.nama} <span style={{background:"#f0f0f0",color:"#888",fontSize:10,borderRadius:4,padding:"1px 5px"}}>manual</span></div>
+                    <div style={{fontSize:11,color:C.ok}}>{fmtRp(parseFloat(it.harga)||0)} x {parseFloat(it.qty)||0} = <b>{fmtRp(Math.round((parseFloat(it.qty)||0)*(parseFloat(it.harga)||0)))}</b></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          }
+          {allItems.length>0&&<>
+            <div style={{borderTop:"1px solid #f0f0f0",marginTop:8,paddingTop:10}}>
+              {hppDb>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#888",marginBottom:4}}><span>Subtotal Database</span><span>{fmtRp(Math.round(hppDb))}</span></div>}
+              {hppManual>0&&<div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:"#888",marginBottom:4}}><span>Subtotal Manual</span><span>{fmtRp(Math.round(hppManual))}</span></div>}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:8,borderTop:"1px dashed #e0e0e0"}}>
+                <span style={{fontWeight:700,fontSize:15}}>Total HPP</span>
+                <span style={{fontWeight:800,fontSize:24,color:C.ok}}>{fmtRp(Math.round(hpp))}</span>
               </div>
-            ))}
-          </div>
-        }
-        {items.length>0&&<>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 0 4px",borderTop:"2px solid #eee",marginTop:8}}>
-            <span style={{fontWeight:700,fontSize:15}}>Total HPP</span>
-            <span style={{fontWeight:800,fontSize:24,color:C.ok}}>{fmtRp(Math.round(hpp))}</span>
-          </div>
-          {customer.trim()&&<div style={{background:"#f0f9ff",borderRadius:8,padding:"8px 12px",marginTop:8,fontSize:12,color:"#0369a1"}}>
-            Customer: {customer}{picName&&<span style={{color:"#64748b"}}> | PJ: {picName}</span>}
-          </div>}
-        </>}
-      </Card>
-      {items.length>0&&<Btn onClick={exportPDF} loading={exporting} bg="#dc2626" style={{width:"100%",padding:"13px",fontSize:14}}>Export PDF</Btn>}
+            </div>
+            {customer.trim()&&<div style={{background:"#f0f9ff",borderRadius:8,padding:"8px 12px",marginTop:10,fontSize:12,color:"#0369a1"}}>
+              Customer: {customer}{picName&&<span style={{color:"#64748b"}}> | PJ: {picName}</span>}
+            </div>}
+          </>}
+        </Card>
+        {allItems.length>0&&<Btn onClick={()=>simpanDanExport(false)} loading={exporting} bg="#dc2626" style={{width:"100%",padding:"13px",fontSize:14}}>
+          💾 Simpan & Export PDF
+        </Btn>}
+      </div>
     </div>
   </div>);
 }
@@ -1410,6 +1458,9 @@ const FINISHING_MENU = [
   {id:"bulk-io",      icon:"📥",label:"Inbound / Outbound"},
   {id:"riwayat",      icon:"📜",label:"Riwayat"},
 ];
+const RND_MENU = [
+  {id:"kalkulator",icon:"🧮",label:"Kalkulator HPP"},
+];
 const MENU_GROUPS = [
   {id:"stok",    label:"Stok"},
   {id:"order",   label:"Order"},
@@ -1417,6 +1468,7 @@ const MENU_GROUPS = [
 ];
 const getMenuItems=(role)=>{
   if(role==="finishing")return FINISHING_MENU;
+  if(role==="rnd")return RND_MENU;
   if(role==="owner")return ALL_MENU;
   return ALL_MENU.filter(m=>ADMIN_IDS.includes(m.id));
 };
@@ -1461,7 +1513,7 @@ function App(){
   const doLogout=()=>{sessionStorage.removeItem('tarda_role');setRole(null);setJenis([]);setStokVarian([]);setPkgs([]);setTrxs([]);if(rtChannel.current)sb.removeChannel(rtChannel.current);};
   const navTo=(id)=>{setPage(id);if(isMobile)setSidebar(false);};
 
-  if(!role)return <LoginPage onLogin={r=>{setRole(r);setPage(r==="finishing"?"fin-dashboard":"dashboard");}}/>;
+  if(!role)return <LoginPage onLogin={r=>{setRole(r);setPage(r==="finishing"?"fin-dashboard":r==="rnd"?"kalkulator":"dashboard");}}/>;
   if(loading)return <LoadingScreen/>;
   if(loadErr)return <LoadingScreen error={loadErr} onRetry={loadAll}/>;
 
@@ -1482,12 +1534,12 @@ function App(){
     case "riwayat":       return <Riwayat trxs={trxs} pkgs={pkgs}/>;
     case "rekap":         return <RekapBulanan trxs={trxs} showNotif={showNotif} pkgs={pkgs}/>;
     case "arsip":         return <ArsipVarian/>;
-    case "kalkulator":    return <KalkulatorHPP jenis={jenis} stokVarian={stokVarian}/>;
+    case "kalkulator":    return <KalkulatorHPP jenis={jenis} stokVarian={stokVarian} role={role}/>;
     default: return null;
   }};
 
   const sidebarW=isMobile?280:240;
-  const roleName=role==="owner"?"Super Admin":role==="finishing"?"Finisher":"Admin Gudang";
+  const roleName=role==="owner"?"Super Admin":role==="finishing"?"Finisher":role==="rnd"?"PIC RnD":"Admin Gudang";
 
   const renderMenu=()=>{
     if(role==="finishing")return(
