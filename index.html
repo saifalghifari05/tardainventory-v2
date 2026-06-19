@@ -267,6 +267,85 @@ function LoadingScreen({error,onRetry}){return(
   </div>
 );}
 
+// ─── STOK VIEWER (no login) ──────────────────────────────
+const VIEWER_CATS = ["Kancing","Pin","Kabak"];
+
+function StokViewer({stokVarian,jenis,onBack}){
+  const [activeKat,setActiveKat]=useState("Kancing");
+  const aktif=stokVarian.filter(k=>k.status==="aktif"&&VIEWER_CATS.includes(k.kategori||""));
+  const list=aktif.filter(k=>k.kategori===activeKat);
+  const totalSisa=list.reduce((s,k)=>s+k.sisa,0);
+  const jkSatuan=list[0]?jenis.find(j=>j.id===list[0].jenisId)?.satuan||"pcs":"pcs";
+
+  return(<div style={{minHeight:"100vh",background:"#f5f5f0"}}>
+    {/* Header */}
+    <div style={{background:"#fff",borderBottom:"1px solid #ebebeb",padding:"0 20px",height:52,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <img src={TARDA_LOGO} alt="" style={{width:20,height:28,objectFit:"contain",filter:"brightness(0)"}}/>
+        <div style={{fontWeight:800,fontSize:13,color:"#111",letterSpacing:1.5}}>TARDA TAILOR</div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <span style={{fontSize:11,color:"#aaa",background:"#f5f5f0",padding:"4px 10px",borderRadius:20}}>Lihat Stok</span>
+        <button onClick={onBack} style={{background:"none",border:"1px solid #e8e8e8",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,color:"#888"}}>← Login</button>
+      </div>
+    </div>
+
+    <div style={{padding:20,maxWidth:560,margin:"0 auto"}}>
+      {/* Summary cards */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+        {VIEWER_CATS.map(kat=>{
+          const items=aktif.filter(k=>k.kategori===kat);
+          const total=parseFloat(items.reduce((s,k)=>s+k.sisa,0).toFixed(1));
+          const jk=jenis.find(j=>items[0]&&j.id===items[0].jenisId);
+          const low=total<10;
+          return(<div key={kat} onClick={()=>setActiveKat(kat)} style={{background:"#fff",borderRadius:12,padding:"14px",boxShadow:"0 2px 8px rgba(0,0,0,.06)",cursor:"pointer",border:`2px solid ${activeKat===kat?"#1e293b":"transparent"}`,transition:"border .15s"}}>
+            <div style={{fontSize:22,marginBottom:4}}>{CAT_ICON[kat]||"📦"}</div>
+            <div style={{fontWeight:700,fontSize:13,marginBottom:2}}>{kat}</div>
+            <div style={{fontWeight:800,fontSize:22,color:low?"#dc2626":"#16a34a"}}>{fmt(total)}</div>
+            <div style={{fontSize:11,color:"#bbb"}}>{jk?.satuan||"pcs"}</div>
+            {low&&<div style={{marginTop:4,background:"#fef2f2",color:"#dc2626",borderRadius:5,fontSize:10,fontWeight:700,padding:"2px 6px",textAlign:"center"}}>MENIPIS</div>}
+          </div>);
+        })}
+      </div>
+
+      {/* Tab kategori */}
+      <div style={{display:"flex",gap:6,marginBottom:14}}>
+        {VIEWER_CATS.map(kat=><button key={kat} onClick={()=>setActiveKat(kat)} style={{padding:"7px 16px",borderRadius:8,border:`1.5px solid ${activeKat===kat?(CAT_COLOR[kat]||"#1e293b"):"#e8e8e8"}`,background:activeKat===kat?(CAT_COLOR[kat]||"#1e293b"):"#fff",color:activeKat===kat?"#fff":"#666",fontWeight:600,cursor:"pointer",fontSize:13}}>{CAT_ICON[kat]} {kat}</button>)}
+      </div>
+
+      {/* Tabel stok */}
+      <div style={{background:"#fff",borderRadius:12,boxShadow:"0 2px 8px rgba(0,0,0,.06)",overflow:"hidden"}}>
+        <div style={{padding:"12px 16px",borderBottom:"1px solid #f0f0f0",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontWeight:700,fontSize:14,color:"#1e293b"}}>{activeKat} <span style={{fontSize:12,color:"#aaa",fontWeight:400}}>({list.length} varian)</span></span>
+          <span style={{fontSize:12,color:"#aaa"}}>Total: <b style={{color:"#16a34a"}}>{fmt(parseFloat(totalSisa.toFixed(1)))} {jkSatuan}</b></span>
+        </div>
+        {list.length===0
+          ?<div style={{textAlign:"center",padding:40,color:"#ccc",fontSize:13}}>Tidak ada stok {activeKat}</div>
+          :<div style={{maxHeight:420,overflowY:"auto"}}>
+            {list.map(k=>{
+              const jk=jenis.find(j=>j.id===k.jenisId);
+              const low=k.sisa<5;
+              return(<div key={k.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderBottom:"1px solid #f8f8f8",background:low?"#fff5f5":"#fff"}}>
+                <div>
+                  <div style={{fontFamily:"monospace",fontWeight:700,fontSize:13,color:CAT_COLOR[activeKat]||"#1e293b"}}>{k.kode}</div>
+                  <div style={{fontSize:12,color:"#aaa",marginTop:2}}>{k.jenisNama}{k.customer&&" · "+k.customer}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontWeight:800,fontSize:18,color:low?"#dc2626":"#16a34a"}}>{k.sisa}</div>
+                  <div style={{fontSize:11,color:"#bbb"}}>{jk?.satuan||"pcs"}</div>
+                  {low&&<div style={{fontSize:10,color:"#dc2626",fontWeight:700}}>menipis</div>}
+                </div>
+              </div>);
+            })}
+          </div>
+        }
+      </div>
+
+      <div style={{textAlign:"center",marginTop:20,fontSize:11,color:"#ccc"}}>Terakhir diperbarui otomatis · Read only</div>
+    </div>
+  </div>);
+}
+
 function LoginPage({onLogin}){
   const [sel,setSel]=useState(null);const [pw,setPw]=useState("");const [err,setErr]=useState("");
   const ROLES=[{id:"owner",l:"Super Admin"},{id:"admin",l:"Admin Gudang"},{id:"finishing",l:"Finisher"},{id:"rnd",l:"PIC RnD"}];
@@ -285,6 +364,9 @@ function LoginPage({onLogin}){
       <input type="password" value={pw} onChange={e=>{setPw(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&login()} placeholder="Password" style={{width:"100%",padding:"13px 16px",border:`1.5px solid ${err?"#e53935":"#e8e8e8"}`,borderRadius:10,fontSize:14,boxSizing:"border-box",outline:"none",background:"#fafafa",marginBottom:8}}/>
       {err&&<div style={{color:"#e53935",fontSize:12,marginBottom:8,textAlign:"center"}}>&#10060; {err}</div>}
       <button onClick={login} style={{width:"100%",padding:14,background:"#111",color:"#fff",border:"none",borderRadius:10,fontSize:15,fontWeight:700,cursor:"pointer",marginTop:4}}>Masuk</button>
+      <div style={{textAlign:"center",marginTop:16,paddingTop:16,borderTop:"1px solid #f0f0f0"}}>
+        <button onClick={()=>onLogin("viewer")} style={{width:"100%",padding:12,background:"#f5f5f0",color:"#555",border:"1px solid #e8e8e8",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer"}}>Lihat Stok Material</button>
+      </div>
     </div>
   </div>);
 }
@@ -1558,14 +1640,15 @@ function App(){
     rtChannel.current=ch;
   },[loadAll]);
 
-  useEffect(()=>{const sr=sessionStorage.getItem('tarda_role');if(sr)setRole(sr);},[]);
-  useEffect(()=>{if(role){loadAll().then(()=>setupRealtime());return()=>{if(rtChannel.current)sb.removeChannel(rtChannel.current);};}}, [role]);
+  useEffect(()=>{const sr=sessionStorage.getItem('tarda_role');if(sr){setRole(sr);setPage(sr==="finishing"?"fin-dashboard":sr==="rnd"?"kalkulator":sr==="viewer"?"viewer":"dashboard");}},[]);
+  useEffect(()=>{if(role){loadAll().then(()=>{if(role!=="viewer")setupRealtime();});return()=>{if(rtChannel.current)sb.removeChannel(rtChannel.current);};}}, [role]);
   useEffect(()=>{if(isMobile)setSidebar(false);},[isMobile]);
 
   const doLogout=()=>{sessionStorage.removeItem('tarda_role');setRole(null);setJenis([]);setStokVarian([]);setPkgs([]);setTrxs([]);if(rtChannel.current)sb.removeChannel(rtChannel.current);};
   const navTo=(id)=>{setPage(id);if(isMobile)setSidebar(false);};
 
-  if(!role)return <LoginPage onLogin={r=>{setRole(r);setPage(r==="finishing"?"fin-dashboard":r==="rnd"?"kalkulator":"dashboard");}}/>;
+  if(!role)return <LoginPage onLogin={r=>{setRole(r);setPage(r==="finishing"?"fin-dashboard":r==="rnd"?"kalkulator":r==="viewer"?"viewer":"dashboard");}}/>;
+  if(role==="viewer"&&!loading)return <StokViewer stokVarian={stokVarian} jenis={jenis} onBack={()=>{sessionStorage.removeItem('tarda_role');setRole(null);}}/>;
   if(loading)return <LoadingScreen/>;
   if(loadErr)return <LoadingScreen error={loadErr} onRetry={loadAll}/>;
 
@@ -1586,6 +1669,7 @@ function App(){
     case "riwayat":       return <Riwayat trxs={trxs} pkgs={pkgs}/>;
     case "rekap":         return <RekapBulanan trxs={trxs} showNotif={showNotif} pkgs={pkgs}/>;
     case "arsip":         return <ArsipVarian/>;
+    case "viewer":        return <StokViewer stokVarian={stokVarian} jenis={jenis} onBack={()=>{setRole(null);setPage("dashboard");}}/>;
     case "kalkulator":    return <KalkulatorHPP jenis={jenis} stokVarian={stokVarian} role={role}/>;
     default: return null;
   }};
