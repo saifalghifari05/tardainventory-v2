@@ -941,7 +941,7 @@ function MenuOrder({pkgs,setPkgs,stokVarian,setStokVarian,addTrx,showNotif,role}
 // ─── INBOUND / OUTBOUND ───────────────────────────────────
 function InboundOutbound({jenis,stokVarian,setStokVarian,addTrx,showNotif,role}){
   const [tab,setTab]=useState("inbound");const [saving,setSaving]=useState(false);
-  const [vf,setVF]=useState({katFilter:"Kain",varianId:"",qty:"",tanggal:today(),ket:"",alasan:"Normal"});
+  const [vf,setVF]=useState({katFilter:"Kain",varianId:"",qty:"",tanggal:today(),ket:"",alasan:"Normal",penjahit:""});
   const aktif=stokVarian.filter(k=>k.status==="aktif");
   const katsForRole=role==="finishing"?FINISHING_CATS:ALL_KAT;
   const varianForKat=useMemo(()=>aktif.filter(k=>(k.kategori||"Kain")===vf.katFilter),[aktif,vf.katFilter]);
@@ -967,10 +967,10 @@ function InboundOutbound({jenis,stokVarian,setStokVarian,addTrx,showNotif,role})
     setSaving(true);
     try{
       await dbPatchStok(selVarian.id,{sisa:newSisa,status:newStatus});
-      await dbUpsert('transaksi',{id:genId(),type:tab,detail,qty:q,satuan:sat,alasan,tanggal:nowISO()});
+      const penjahit=tab==="outbound"?vf.penjahit.trim():"";await dbUpsert('transaksi',{id:genId(),type:tab,detail,qty:q,satuan:sat,alasan,penjahit,tanggal:nowISO()});
       setStokVarian(p=>p.map(k=>k.id===selVarian.id?{...k,sisa:newSisa,status:newStatus}:k));
       addTrx(tab,detail,q,sat);showNotif(`✅ ${selVarian.kode} ${tab==="inbound"?"+":"-"}${q} ${sat}`);
-      setVF(x=>({...x,qty:"",ket:"",alasan:"Normal"}));
+      setVF(x=>({...x,qty:"",ket:"",alasan:"Normal",penjahit:""}));
     }catch(e){showNotif("Gagal: "+e.message,"err");}
     setSaving(false);
   };
@@ -1001,7 +1001,8 @@ function InboundOutbound({jenis,stokVarian,setStokVarian,addTrx,showNotif,role})
           {["Normal","Revisi","Cacat","Lainnya"].map(a=><button key={a} onClick={()=>setVF(x=>({...x,alasan:a}))} style={{padding:"7px 14px",borderRadius:8,border:`1.5px solid ${vf.alasan===a?(a==="Normal"?C.pri:a==="Revisi"?C.warn:a==="Cacat"?C.err:"#6b7280"):"#e8e8e8"}`,background:vf.alasan===a?(a==="Normal"?C.pri+"15":a==="Revisi"?C.warn+"15":a==="Cacat"?C.err+"15":"#6b728015"):"#fff",color:vf.alasan===a?(a==="Normal"?C.pri:a==="Revisi"?C.warn:a==="Cacat"?C.err:"#6b7280"):"#888",fontWeight:700,cursor:"pointer",fontSize:12}}>{a==="Normal"?"📦 Normal":a==="Revisi"?"🔄 Revisi":a==="Cacat"?"❌ Cacat":"📝 Lainnya"}</button>)}
         </div>
       </div>}
-      <Inp label="Keterangan" value={vf.ket} onChange={v=>setVF(x=>({...x,ket:v}))} placeholder={tab==="inbound"?"Koreksi stok":vf.alasan==="Revisi"?"Penjahit A — jahitan lepas":vf.alasan==="Cacat"?"Material cacat / rusak":"Keterangan tambahan"}/>
+      {tab==="outbound"&&<Inp label="Nama Penjahit" value={vf.penjahit} onChange={v=>setVF(x=>({...x,penjahit:v}))} placeholder="opsional — nama penjahit yang bersangkutan"/>}
+      <Inp label="Keterangan" value={vf.ket} onChange={v=>setVF(x=>({...x,ket:v}))} placeholder={tab==="inbound"?"Koreksi stok":vf.alasan==="Revisi"?"Jahitan lepas / ukuran salah":vf.alasan==="Cacat"?"Material cacat / rusak":"Keterangan tambahan"}/>
       {vf.qty&&selVarian&&<div style={{background:tab==="outbound"?"#fff3e0":"#e8f5e9",borderRadius:8,padding:"10px 12px",marginBottom:12,fontSize:13}}>Sisa setelah: <b>{tab==="inbound"?+((selVarian.sisa||0)+parseFloat(vf.qty||0)).toFixed(3):+Math.max(0,(selVarian.sisa||0)-parseFloat(vf.qty||0)).toFixed(3)}</b> {selJK?.satuan||""}</div>}
       <Btn onClick={save} loading={saving} disabled={!vf.varianId} bg={tab==="inbound"?C.ok:C.err} style={{width:"100%"}}>{tab==="inbound"?"✅ Simpan Inbound":"✅ Simpan Outbound"}</Btn>
     </Card>
@@ -1058,7 +1059,7 @@ function Riwayat({trxs,pkgs}){
         <TD><Badge label={t.type} color={t.type==="inbound"?C.ok:C.warn}/></TD>
         <TD>{t.alasan&&t.alasan!=="Normal"&&t.alasan!==""?<Badge label={t.alasan==="Revisi"?"🔄 Revisi":t.alasan==="Cacat"?"❌ Cacat":"📝 "+t.alasan} color={t.alasan==="Revisi"?C.warn:t.alasan==="Cacat"?C.err:"#6b7280"}/>:<span style={{color:"#ccc",fontSize:12}}>–</span>}</TD>
         <TD style={{whiteSpace:"nowrap",fontWeight:600,color:t.type==="inbound"?C.ok:C.warn}}>{t.qty!==undefined&&t.qty!==""?`${t.type==="inbound"?"+":"-"}${toNum(t.qty)} ${t.satuan||""}`:"–"}</TD>
-        <TD style={{whiteSpace:"pre-line"}}>{hasPaket?<span style={{color:C.pri,textDecoration:"underline",textDecorationStyle:"dotted",cursor:"pointer"}}>{t.detail}</span>:t.detail}</TD>
+        <TD style={{whiteSpace:"pre-line"}}>{hasPaket?<span style={{color:C.pri,textDecoration:"underline",textDecorationStyle:"dotted",cursor:"pointer"}}>{t.detail}</span>:t.detail}{t.penjahit&&<div style={{fontSize:11,color:"#6b7280",marginTop:2}}>👤 {t.penjahit}</div>}</TD>
       </tr>);})}
     </tbody></Tbl><Pg page={pg} total={Math.ceil(list.length/PS)} onChange={setPg}/></>}
   </Card>
