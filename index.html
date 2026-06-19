@@ -58,6 +58,8 @@ const jakartaTime = () => {
   const p=n=>String(n).padStart(2,"0");
   return `${p(j.getDate())}/${p(j.getMonth()+1)}/${j.getFullYear()} ${p(j.getHours())}:${p(j.getMinutes())}:${p(j.getSeconds())}`;
 };
+// ISO format untuk disimpan ke DB agar sort benar
+const nowISO = () => new Date().toISOString();
 const getOpts=(key,def)=>{try{const v=localStorage.getItem(key);return v?JSON.parse(v):def;}catch{return def;}};
 
 const useMobile=()=>{
@@ -152,7 +154,7 @@ const dbProcessOrder = async (paketId,{forceItems=[],skipFinishing=false}={}) =>
     await dbUpdate('pakets',paketId,{status:'selesai'});
     const summary=items.map(i=>`${i.nama.split(' ').pop()} ${i.qty}${(i.satuan||'').charAt(0)}`).join(' | ');
     const detail=`${paket.nama} · ${paket.kode}\n${summary}`;
-    await dbUpsert('transaksi',{id:genId(),type:'outbound',detail,qty:items.length,satuan:'item',tanggal:jakartaTime()});
+    await dbUpsert('transaksi',{id:genId(),type:'outbound',detail,qty:items.length,satuan:'item',tanggal:nowISO()});
   }
   return {success:true,log,allProcessed:notFoundCount===0,processedItems};
 };
@@ -471,7 +473,7 @@ function StokVarian({jenis,stokVarian,setStokVarian,showNotif,addTrx,role}){
     const payload={id,kode,jenis_id:f.jenisId,jenis_nama:jk.nama,kode_prefix:jk.kodePrefix||"",warna:kodeVar_||kode,tipe:isKain?f.tipe:"standard",qty:qty,sisa:qty,customer,tanggal:f.tanggal,status:"aktif",kategori:activeKat};
     const stLocal={id,kode,jenisId:f.jenisId,jenisNama:jk.nama,kodePrefix:jk.kodePrefix||"",warna:kodeVar_||kode,tipe:isKain?f.tipe:"standard",qty,sisa:qty,customer,tanggal:f.tanggal,status:"aktif",kategori:activeKat};
     setSaving(true);
-    try{await dbUpsert('stok_varian',payload);await dbUpsert('transaksi',{id:genId(),type:"inbound",detail:`${kode} · ${qty} ${jk.satuan||"pcs"}${customer?", "+customer:""}`,qty,satuan:jk.satuan||"pcs",tanggal:jakartaTime()});setStokVarian(p=>[...p,stLocal]);addTrx("inbound",`${kode} masuk`);showNotif(`${activeKat} ${kode} berhasil ditambah!`);setModal(false);}
+    try{await dbUpsert('stok_varian',payload);await dbUpsert('transaksi',{id:genId(),type:"inbound",detail:`${kode} · ${qty} ${jk.satuan||"pcs"}${customer?", "+customer:""}`,qty,satuan:jk.satuan||"pcs",tanggal:nowISO()});setStokVarian(p=>[...p,stLocal]);addTrx("inbound",`${kode} masuk`);showNotif(`${activeKat} ${kode} berhasil ditambah!`);setModal(false);}
     catch(e){showNotif("Gagal: "+e.message,"err");}
     setSaving(false);
   };
@@ -642,7 +644,7 @@ function BulkIO({jenis,stokVarian,setStokVarian,setTrxs,showNotif}){
         const newSisa=tab==="inbound"?+(k.sisa+item.qty).toFixed(3):+Math.max(0,k.sisa-item.qty).toFixed(3);
         await dbPatchStok(k.id,{sisa:newSisa,status:"aktif"});
         const jk=jenis.find(j=>j.id===k.jenisId);
-        const newTrx={id:genId(),type:tab,detail:`${k.kode} · ${item.qty} ${jk?.satuan||"pcs"}`,qty:item.qty,satuan:jk?.satuan||"pcs",tanggal:jakartaTime()};
+        const newTrx={id:genId(),type:tab,detail:`${k.kode} · ${item.qty} ${jk?.satuan||"pcs"}`,qty:item.qty,satuan:jk?.satuan||"pcs",tanggal:nowISO()};
         await dbUpsert("transaksi",newTrx);
         setStokVarian(p=>p.map(x=>x.id===k.id?{...x,sisa:newSisa}:x));
         setTrxs(p=>[newTrx,...p]);
@@ -962,7 +964,7 @@ function InboundOutbound({jenis,stokVarian,setStokVarian,addTrx,showNotif,role})
     setSaving(true);
     try{
       await dbPatchStok(selVarian.id,{sisa:newSisa,status:newStatus});
-      await dbUpsert('transaksi',{id:genId(),type:tab,detail,qty:q,satuan:sat,tanggal:jakartaTime()});
+      await dbUpsert('transaksi',{id:genId(),type:tab,detail,qty:q,satuan:sat,tanggal:nowISO()});
       setStokVarian(p=>p.map(k=>k.id===selVarian.id?{...k,sisa:newSisa,status:newStatus}:k));
       addTrx(tab,detail);showNotif(`✅ ${selVarian.kode} ${tab==="inbound"?"+":"-"}${q} ${sat}`);
       setVF(x=>({...x,qty:"",ket:""}));
@@ -1214,7 +1216,7 @@ function App(){
   const isMobile=useMobile();const rtChannel=useRef(null);
 
   const showNotif=useCallback((m,t="ok")=>{setNotif({m,t});setTimeout(()=>setNotif(null),3500);},[]);
-  const addTrx=useCallback((type,detail,qty,satuan)=>setTrxs(p=>[{id:genId(),type,detail,qty:qty||"",satuan:satuan||"",tanggal:jakartaTime()},...p]),[]);
+  const addTrx=useCallback((type,detail,qty,satuan)=>setTrxs(p=>[{id:genId(),type,detail,qty:qty||"",satuan:satuan||"",tanggal:nowISO()},...p]),[]);
 
   const loadAll=useCallback(async(silent=false)=>{
     if(!silent){setLoading(true);setLoadErr(null);}
