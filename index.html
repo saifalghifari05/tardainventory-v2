@@ -1287,13 +1287,12 @@ function ModelCard({model,idx,jenis,stokVarian,onChange,onRemove,canRemove,isRnD
 
   const aktif=stokVarian.filter(k=>k.status==="aktif");
   const allPickable=useMemo(()=>{
-    const seen=new Set();
-    return aktif.reduce((acc,k)=>{
-      const jk=jenis.find(j=>j.id===k.jenisId);
-      if(!seen.has(k.jenisId)&&jk){seen.add(k.jenisId);acc.push({id:jk.id,nama:jk.nama,satuan:jk.satuan||"pcs",kategori:jk.kategori||"Kain",harga:jk.harga||0});}
-      return acc;
-    },[]);
-  },[aktif,jenis]);
+    // Pakai jenis (master harga) langsung, bukan stokVarian
+    // supaya semua material tampil meski stok sedang kosong
+    return jenis.filter(j=>j.harga>0).map(j=>({
+      id:j.id,nama:j.nama,satuan:j.satuan||"pcs",kategori:j.kategori||"Kain",harga:j.harga||0
+    }));
+  },[jenis]);
   const cats=useMemo(()=>["Semua",...new Set(allPickable.map(i=>i.kategori))],[allPickable]);
   const filtered=useMemo(()=>{
     let l=allPickable;
