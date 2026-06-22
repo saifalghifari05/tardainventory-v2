@@ -649,7 +649,7 @@ function BuatPaket({jenis,stokVarian,pkgs,setPkgs,showNotif}){
       <div style={{maxHeight:300,overflowY:"auto",border:"1px solid #f0f0f0",borderRadius:8}}>
         {filtered.map(item=>{const isSel=selected[item.id]!==undefined;return(
           <div key={item.id} onClick={()=>toggle(item)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 16px",cursor:"pointer",background:isSel?"#f0faf0":"#fff",borderBottom:"1px solid #f8f8f8"}}>
-            <div><div style={{fontWeight:600,fontSize:13}}>{item.nama}</div><div style={{fontSize:11,color:"#aaa",marginTop:2}}>{item.kategori} · {item.stok} {item.satuan} · {fmtRp(item.harga)}/{item.satuan}</div></div>
+            <div><div style={{fontWeight:600,fontSize:13}}>{item.nama}</div><div style={{fontSize:11,color:"#aaa",marginTop:2}}>{item.kategori} · {item.stok} {item.satuan} · {fmtRp(item.harga)}/{item.satuan}{item.customer&&<span style={{color:"#888"}}> · {item.customer}</span>}</div></div>
             <div style={{color:isSel?C.ok:"#ddd",fontSize:22,fontWeight:700}}>{isSel?"✓":"○"}</div>
           </div>);})}
       </div>
