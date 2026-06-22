@@ -704,14 +704,25 @@ function BulkIO({jenis,stokVarian,setStokVarian,setTrxs,showNotif}){
   const [queue,setQueue]=useState([]);
   const [saving,setSaving]=useState(false);
   const aktif=stokVarian.filter(k=>k.status==="aktif");
-  const finItems=useMemo(()=>aktif.filter(k=>FINISHING_CATS.includes(k.kategori)),[aktif]);
+  // Gabungkan: stokVarian aktif + jenis yang belum punya stok aktif
+  const finItemsWithStok=useMemo(()=>aktif.filter(k=>FINISHING_CATS.includes(k.kategori)),[aktif]);
+  const finItems=useMemo(()=>{
+    const hasSeen=new Set(finItemsWithStok.map(k=>k.jenisId));
+    // Tambah jenis dari master harga yang belum punya stok aktif
+    const noStokItems=jenis.filter(j=>FINISHING_CATS.includes(j.kategori||"")&&!hasSeen.has(j.id)).map(j=>({
+      id:"jenis_"+j.id,jenisId:j.id,jenisNama:j.nama,kode:j.kodePrefix||j.kode||"–",
+      kategori:j.kategori,sisa:0,qty:0,status:"aktif",_noStok:true
+    }));
+    return [...finItemsWithStok,...noStokItems];
+  },[finItemsWithStok,jenis]);
   const varianForKat=useMemo(()=>finItems.filter(k=>k.kategori===katFilter),[finItems,katFilter]);
   const selVarian=finItems.find(k=>k.id===varianId);
-  const selJK=selVarian?jenis.find(j=>j.id===selVarian.jenisId):null;
+  const selJK=selVarian?jenis.find(j=>j.id===(selVarian._noStok?selVarian.jenisId:selVarian.jenisId)):null;
 
   const addToQueue=()=>{
     if(!varianId)return showNotif("Pilih material dulu!","err");
     if(!(parseFloat(qty)>0))return showNotif("Isi jumlah yang valid!","err");
+    if(tab==="outbound"&&selVarian&&selVarian.sisa<=0)return showNotif("Stok 0, tidak bisa outbound!","err");
     if(tab==="outbound"&&selVarian&&parseFloat(qty)>selVarian.sisa)return showNotif(`Stok hanya ${selVarian.sisa}!`,"err");
     const existing=queue.findIndex(q=>q.id===varianId);
     if(existing>=0){const newQ=[...queue];newQ[existing]={...newQ[existing],qty:parseFloat(qty)};setQueue(newQ);}
@@ -728,18 +739,29 @@ function BulkIO({jenis,stokVarian,setStokVarian,setTrxs,showNotif}){
       const newTrxs=[];
       for(const item of queue){
         const k=finItems.find(x=>x.id===item.id);if(!k)continue;
-        const newSisa=tab==="inbound"?+(k.sisa+item.qty).toFixed(3):+Math.max(0,k.sisa-item.qty).toFixed(3);
         const jk=jenis.find(j=>j.id===k.jenisId);
-        const newTrx={id:genId(),type:tab,detail:`${k.kode} · ${item.qty} ${jk?.satuan||"pcs"}`,qty:item.qty,satuan:jk?.satuan||"pcs",tanggal:nowISO()};
-        // Simpan ke Supabase
-        await dbPatchStok(k.id,{sisa:newSisa,status:"aktif"});
-        await dbUpsert("transaksi",newTrx);
-        // Kumpulkan untuk update state sekaligus
-        stokUpdates.push({id:k.id,newSisa});
-        newTrxs.push(newTrx);
+        const sat=jk?.satuan||"pcs";
+        const newTrx={id:genId(),type:tab,detail:`${k.kode} · ${item.qty} ${sat}`,qty:item.qty,satuan:sat,tanggal:nowISO()};
+        if(k._noStok){
+          // Item belum punya stok — buat stokVarian baru
+          if(tab==="outbound")continue; // skip, sudah divalidasi sebelumnya
+          const newId=genId();
+          const newStok={id:newId,kode:k.kode,jenis_id:k.jenisId,jenis_nama:k.jenisNama,kode_prefix:jk?.kodePrefix||"",warna:k.kode,tipe:"standard",qty:item.qty,sisa:item.qty,customer:"",tanggal:new Date().toISOString().slice(0,10),status:"aktif",kategori:k.kategori};
+          await dbUpsert("stok_varian",newStok);
+          await dbUpsert("transaksi",newTrx);
+          stokUpdates.push({id:newId,newSisa:item.qty,isNew:true,stok:newStok});
+          newTrxs.push(newTrx);
+        }else{
+          const newSisa=tab==="inbound"?+(k.sisa+item.qty).toFixed(3):+Math.max(0,k.sisa-item.qty).toFixed(3);
+          await dbPatchStok(k.id,{sisa:newSisa,status:"aktif"});
+          await dbUpsert("transaksi",newTrx);
+          stokUpdates.push({id:k.id,newSisa});
+          newTrxs.push(newTrx);
+        }
       }
       // Update semua state sekaligus setelah loop selesai
-      setStokVarian(p=>p.map(x=>{const u=stokUpdates.find(u=>u.id===x.id);return u?{...x,sisa:u.newSisa}:x;}));
+      const newStokItems=stokUpdates.filter(u=>u.isNew).map(u=>({...u.stok,jenisId:u.stok.jenis_id,jenisNama:u.stok.jenis_nama,kodePrefix:u.stok.kode_prefix,sisa:u.newSisa}));
+      setStokVarian(p=>[...newStokItems,...p.map(x=>{const u=stokUpdates.find(u=>u.id===x.id&&!u.isNew);return u?{...x,sisa:u.newSisa}:x;})]);
       setTrxs(p=>[...newTrxs,...p]);
       showNotif(`✅ ${queue.length} item berhasil di-${tab}`);
       setQueue([]);
@@ -772,7 +794,7 @@ function BulkIO({jenis,stokVarian,setStokVarian,setTrxs,showNotif}){
         <label style={{fontSize:11,fontWeight:600,color:"#888",textTransform:"uppercase",letterSpacing:.8,display:"block",marginBottom:6}}>Material</label>
         <select value={varianId} onChange={e=>setVarianId(e.target.value)} style={{width:"100%",padding:"11px 12px",border:"1.5px solid #e8e8e8",borderRadius:8,fontSize:13,boxSizing:"border-box",background:"#fff"}}>
           <option value="">— Pilih material —</option>
-          {varianForKat.map(k=>{const jk=jenis.find(j=>j.id===k.jenisId);return<option key={k.id} value={k.id}>{k.jenisNama} — {k.kode} (stok: {k.sisa} {jk?.satuan||"pcs"})</option>;})}
+          {varianForKat.map(k=>{const jk=jenis.find(j=>j.id===k.jenisId);const isDisabled=tab==="outbound"&&k.sisa<=0;return<option key={k.id} value={k.id} disabled={isDisabled}>{k.jenisNama} — {k.kode} (stok: {k.sisa} {jk?.satuan||"pcs"}){isDisabled?" ✗":""}</option>;})}
         </select>
       </div>
 
