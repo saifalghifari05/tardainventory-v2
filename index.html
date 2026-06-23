@@ -53,6 +53,13 @@ const CAT_ICON  = {Kain:"🧵",Resletting:"🔗",Benang:"🧶",Interlining:"🪡
 const fmt    = n => new Intl.NumberFormat("id-ID").format(n);
 const fmtRp  = n => "Rp " + fmt(n);
 const genId  = () => Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+// Sort varian by warna (suffix kode setelah PJG-/PDK-) alfabetis, lalu kode penuh
+const sortByWarna = arr => [...arr].sort((a,b)=>{
+  const suffix = k => {const parts=String(k.kode||"").split("-");return parts.length>1?parts.slice(1).join("-"):String(k.kode||"");};
+  const sa=suffix(a), sb=suffix(b);
+  const c=sa.localeCompare(sb,undefined,{numeric:true});
+  return c!==0?c:String(a.kode||"").localeCompare(String(b.kode||""),undefined,{numeric:true});
+});
 const today  = () => new Date().toISOString().split("T")[0];
 const toNum  = v => parseFloat(v)||0;
 const jakartaTime = () => {
@@ -715,7 +722,7 @@ function BulkIO({jenis,stokVarian,setStokVarian,setTrxs,showNotif}){
     }));
     return [...finItemsWithStok,...noStokItems];
   },[finItemsWithStok,jenis]);
-  const varianForKat=useMemo(()=>finItems.filter(k=>k.kategori===katFilter),[finItems,katFilter]);
+  const varianForKat=useMemo(()=>sortByWarna(finItems.filter(k=>k.kategori===katFilter)),[finItems,katFilter]);
   const selVarian=finItems.find(k=>k.id===varianId);
   const selJK=selVarian?jenis.find(j=>j.id===(selVarian._noStok?selVarian.jenisId:selVarian.jenisId)):null;
 
@@ -1054,9 +1061,14 @@ function MenuOrder({pkgs,setPkgs,stokVarian,setStokVarian,addTrx,showNotif,role}
 function InboundOutbound({jenis,stokVarian,setStokVarian,addTrx,showNotif,role}){
   const [tab,setTab]=useState("inbound");const [saving,setSaving]=useState(false);
   const [vf,setVF]=useState({katFilter:"Kain",varianId:"",qty:"",tanggal:today(),ket:"",alasan:"Normal",penjahit:""});
+  const [searchVar,setSearchVar]=useState("");
   const aktif=stokVarian.filter(k=>k.status==="aktif");
   const katsForRole=role==="finishing"?FINISHING_CATS:ALL_KAT;
-  const varianForKat=useMemo(()=>aktif.filter(k=>(k.kategori||"Kain")===vf.katFilter),[aktif,vf.katFilter]);
+  const varianForKat=useMemo(()=>{
+    let l=aktif.filter(k=>(k.kategori||"Kain")===vf.katFilter);
+    if(searchVar)l=l.filter(k=>(k.kode||"").toLowerCase().includes(searchVar.toLowerCase())||(k.jenisNama||"").toLowerCase().includes(searchVar.toLowerCase()));
+    return sortByWarna(l);
+  },[aktif,vf.katFilter,searchVar]);
   const selVarian=stokVarian.find(k=>k.id===vf.varianId);const selJK=selVarian?jenis.find(j=>j.id===selVarian.jenisId):null;
 
   // Fix: gunakan useEffect agar tidak setState saat render
@@ -1099,6 +1111,7 @@ function InboundOutbound({jenis,stokVarian,setStokVarian,addTrx,showNotif,role})
         <div className="kat-tabs">{katsForRole.map(cat=><button key={cat} onClick={()=>setVF(x=>({...x,katFilter:cat,varianId:""}))} style={{padding:"5px 12px",borderRadius:20,border:"none",cursor:"pointer",fontSize:12,fontWeight:600,background:vf.katFilter===cat?(CAT_COLOR[cat]||C.pri):"#f0f0f0",color:vf.katFilter===cat?"#fff":"#555"}}>{cat}</button>)}</div>
       </div>
       <div style={{marginBottom:12}}><label style={{fontSize:12,color:"#555",marginBottom:4,display:"block",fontWeight:600}}>Pilih {vf.katFilter} *</label>
+        <input placeholder={`🔍 Cari ${vf.katFilter}...`} value={searchVar} onChange={e=>setSearchVar(e.target.value)} style={{border:"1px solid #ddd",borderRadius:8,padding:"8px 12px",fontSize:13,width:"100%",boxSizing:"border-box",marginBottom:8}}/>
         {varianForKat.length===0?<div style={{color:"#aaa",fontSize:13,padding:"10px 0"}}>Tidak ada stok aktif</div>
         :<select value={vf.varianId} onChange={e=>setVF(x=>({...x,varianId:e.target.value}))} style={{border:"1px solid #ddd",borderRadius:8,padding:"9px 12px",fontSize:13,width:"100%",boxSizing:"border-box"}}>
           <option value="">— Pilih item —</option>
