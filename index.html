@@ -115,6 +115,24 @@ const dbUpsert = async (table,row) => {const {error}=await sb.from(table).upsert
 const dbDelete = async (table,id)  => {const {error}=await sb.from(table).delete().eq('id',id);if(error)throw new Error(error.message);};
 const dbUpdate = async (table,id,fields) => {const {error}=await sb.from(table).update(fields).eq('id',id);if(error)throw new Error(error.message);};
 
+// Propagasi rename nama jenis ke semua tabel terkait
+const dbRenameJenis = async (jenisId, namaBaru, namaLama) => {
+  if (namaBaru === namaLama) return;
+  // 1. stok_varian
+  await sb.from('stok_varian').update({ jenis_nama: namaBaru }).eq('jenis_id', jenisId);
+  // 2. arsip_kain
+  await sb.from('arsip_kain').update({ jenis_nama: namaBaru }).eq('jenis_id', jenisId);
+  // 3. paket_items — nama berformat "NamaJenis KODE", ganti prefix saja
+  const { data: items } = await sb.from('paket_items')
+    .select('id,nama').like('nama', `${namaLama} %`);
+  for (const it of (items || [])) {
+    if (it.nama.startsWith(namaLama + ' ')) {
+      const sisa = it.nama.slice(namaLama.length); // " KODE"
+      await sb.from('paket_items').update({ nama: namaBaru + sisa }).eq('id', it.id);
+    }
+  }
+};
+
 const dbPatchStok = async (id,fields) => {
   await dbUpdate('stok_varian',id,fields);
   if(fields.status==='arsip'){
@@ -454,7 +472,7 @@ function NilaiStok({jenis,stokVarian}){
 }
 
 // ─── MASTER HARGA ─────────────────────────────────────────
-function MasterHarga({jenis,setJenis,showNotif,role}){
+function MasterHarga({jenis,setJenis,setStokVarian,showNotif,role}){
   const canEdit=role==="owner";
   const [search,setSearch]=useState("");const [katFilter,setKatFilter]=useState("Semua");const [pg,setPg]=useState(1);const PS=15;const [saving,setSaving]=useState(false);
   const [kModal,setKModal]=useState(false);const [kEdit,setKEdit]=useState(null);const [kF,setKF]=useState({nama:"",kodePrefix:"",harga:"",satuan:"meter"});
@@ -467,9 +485,21 @@ function MasterHarga({jenis,setJenis,showNotif,role}){
   const saveKain=async()=>{
     if(!kF.nama||!kF.harga)return showNotif("Lengkapi semua field!","err");
     const id=kEdit?kEdit.id:genId();const np=kF.kodePrefix.trim().toUpperCase();
+    const namaLama=kEdit?kEdit.nama:"";
     const api={id,nama:kF.nama,kode_prefix:np,harga:parseInt(kF.harga),kategori:"Kain",satuan:kF.satuan};
     const st={id,nama:kF.nama,kodePrefix:np,harga:parseInt(kF.harga),kategori:"Kain",satuan:kF.satuan,_sheet:"jenis_kain"};
-    setSaving(true);try{await dbUpsert('jenis_kain',api);kEdit?setJenis(p=>p.map(j=>j.id===id?st:j)):setJenis(p=>[...p,st]);showNotif("Kain disimpan!");setKModal(false);}catch(e){showNotif("Gagal: "+e.message,"err");}setSaving(false);
+    setSaving(true);
+    try{
+      await dbUpsert('jenis_kain',api);
+      if(kEdit&&namaLama!==kF.nama){
+        await dbRenameJenis(id,kF.nama,namaLama);
+        setStokVarian&&setStokVarian(p=>p.map(k=>k.jenisId===id?{...k,jenisNama:kF.nama}:k));
+      }
+      kEdit?setJenis(p=>p.map(j=>j.id===id?st:j)):setJenis(p=>[...p,st]);
+      showNotif(kEdit&&namaLama!==kF.nama?"Kain disimpan & nama disinkron!":"Kain disimpan!");
+      setKModal(false);
+    }catch(e){showNotif("Gagal: "+e.message,"err");}
+    setSaving(false);
   };
   const delKain=async j=>{if(!confirm(`Hapus ${j.nama}?`))return;try{await dbDelete('jenis_kain',j.id);setJenis(p=>p.filter(x=>x.id!==j.id));showNotif("Dihapus!");}catch(e){showNotif("Gagal: "+e.message,"err");}};
   const openMat=(item=null)=>{setMEdit(item);setMF(item?{kode:item.kodePrefix||"",nama:item.nama,kategori:item.kategori,satuan:item.satuan,harga:item.harga}:{kode:"",nama:"",kategori:"Kancing",satuan:"pcs",harga:""});setMModal(true);};
@@ -477,9 +507,21 @@ function MasterHarga({jenis,setJenis,showNotif,role}){
     if(!mF.nama||!mF.kategori||!mF.satuan||!mF.harga)return showNotif("Lengkapi semua field!","err");
     const kode=(mF.kode.trim()||mF.nama.replace(/\s+/g,"-").slice(0,12)).toUpperCase();
     const id=mEdit?mEdit.id:genId();const h=parseInt(mF.harga)||0;
+    const namaLama=mEdit?mEdit.nama:"";
     const api={id,kode,nama:mF.nama,satuan:mF.satuan,kategori:mF.kategori,harga:h};
     const st={id,nama:mF.nama,kodePrefix:kode,harga:h,kategori:mF.kategori,satuan:mF.satuan,_sheet:"materials"};
-    setSaving(true);try{await dbUpsert('materials',api);mEdit?setJenis(p=>p.map(j=>j.id===id?st:j)):setJenis(p=>[...p,st]);showNotif("Disimpan!");setMModal(false);}catch(e){showNotif("Gagal: "+e.message,"err");}setSaving(false);
+    setSaving(true);
+    try{
+      await dbUpsert('materials',api);
+      if(mEdit&&namaLama!==mF.nama){
+        await dbRenameJenis(id,mF.nama,namaLama);
+        setStokVarian&&setStokVarian(p=>p.map(k=>k.jenisId===id?{...k,jenisNama:mF.nama}:k));
+      }
+      mEdit?setJenis(p=>p.map(j=>j.id===id?st:j)):setJenis(p=>[...p,st]);
+      showNotif(mEdit&&namaLama!==mF.nama?"Disimpan & nama disinkron!":"Disimpan!");
+      setMModal(false);
+    }catch(e){showNotif("Gagal: "+e.message,"err");}
+    setSaving(false);
   };
   const delMat=async item=>{if(!confirm(`Hapus ${item.nama}?`))return;try{await dbDelete('materials',item.id);setJenis(p=>p.filter(x=>x.id!==item.id));showNotif("Dihapus!");}catch(e){showNotif("Gagal: "+e.message,"err");}};
   const handleEdit=item=>item.kategori==="Kain"?openKain(item):openMat(item);
@@ -1701,7 +1743,7 @@ function App(){
     case "dashboard":     return <Dashboard jenis={jenis} stokVarian={stokVarian} pkgs={pkgs} onView={setViewPaket}/>;
     case "fin-dashboard": return <DashboardFinishing jenis={jenis} stokVarian={stokVarian}/>;
     case "nilai-stok":    return <NilaiStok jenis={jenis} stokVarian={stokVarian}/>;
-    case "master-harga":  return <MasterHarga jenis={jenis} setJenis={setJenis} showNotif={showNotif} role={role}/>;
+    case "master-harga":  return <MasterHarga jenis={jenis} setJenis={setJenis} setStokVarian={setStokVarian} showNotif={showNotif} role={role}/>;
     case "stok-varian":   return <StokVarian jenis={jenis} stokVarian={stokVarian} setStokVarian={setStokVarian} showNotif={showNotif} addTrx={addTrx} role={role}/>;
     case "buat-paket":    return <BuatPaket jenis={jenis} stokVarian={stokVarian} pkgs={pkgs} setPkgs={setPkgs} showNotif={showNotif}/>;
     case "daftar-paket":  return <DaftarPaket pkgs={pkgs} setPkgs={setPkgs} onView={setViewPaket} showNotif={showNotif} role={role} jenis={jenis} stokVarian={stokVarian}/>;
